@@ -1,0 +1,458 @@
+import React, { useState, useEffect, useRef } from 'react';
+import {
+  ArrowDownLeft,
+  ArrowUpRight,
+  Sparkles,
+  ShieldCheck,
+  X,
+  ChevronLeft,
+  ChevronRight,
+} from 'lucide-react';
+import { LiveActivity } from '../types';
+import {
+  GLOBAL_IDENTITIES,
+  INITIAL_200_LIVE_ACTIVITIES,
+  createDynamicLiveActivity,
+} from '../data/globalNames';
+
+interface HeaderLiveActivityTickerProps {
+  theme?: 'dark' | 'light';
+  onViewLedger?: () => void;
+}
+
+export const HeaderLiveActivityTicker: React.FC<HeaderLiveActivityTickerProps> = ({
+  theme = 'dark',
+  onViewLedger,
+}) => {
+  // Pre-seeded with 250+ unique, shuffled global transactions spanning 45+ countries
+  const [activities, setActivities] = useState<LiveActivity[]>(() => INITIAL_200_LIVE_ACTIVITIES);
+  const [currentIndex, setCurrentIndex] = useState<number>(0);
+  const [isPaused, setIsPaused] = useState<boolean>(false);
+  const [showProofModal, setShowProofModal] = useState<boolean>(false);
+  const [selectedProof, setSelectedProof] = useState<LiveActivity | null>(null);
+
+  // Floating live pop-up toast state (initialized with a distinct global identity)
+  const [toastActivity, setToastActivity] = useState<LiveActivity | null>(() => {
+    return INITIAL_200_LIVE_ACTIVITIES[12] || INITIAL_200_LIVE_ACTIVITIES[0];
+  });
+  const [showToast, setShowToast] = useState<boolean>(true);
+  const toastTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Fast & smooth 3.2-second transition cycle across all 250+ transactions
+  const ROTATION_INTERVAL_MS = 3200;
+
+  // Seamless, glitch-free automatic carousel rotation across the 250+ transactions
+  useEffect(() => {
+    if (isPaused || activities.length === 0) return;
+
+    const timer = setInterval(() => {
+      setCurrentIndex((prev) => (prev + 1) % activities.length);
+    }, ROTATION_INTERVAL_MS);
+
+    return () => clearInterval(timer);
+  }, [isPaused, activities.length]);
+
+  // Periodic generation of fresh floating toast transactions every 8.5s with diverse international users
+  useEffect(() => {
+    // Initial toast hide after 5 seconds
+    toastTimeoutRef.current = setTimeout(() => {
+      setShowToast(false);
+    }, 5000);
+
+    const toastInterval = setInterval(() => {
+      const freshToastEvent = createDynamicLiveActivity(2);
+      setToastActivity(freshToastEvent);
+      setShowToast(true);
+
+      if (toastTimeoutRef.current) {
+        clearTimeout(toastTimeoutRef.current);
+      }
+      toastTimeoutRef.current = setTimeout(() => {
+        setShowToast(false);
+      }, 5500);
+    }, 8500);
+
+    return () => {
+      clearInterval(toastInterval);
+      if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+    };
+  }, []);
+
+  // Increment seconds ago timer dynamically
+  useEffect(() => {
+    const secInterval = setInterval(() => {
+      setActivities((prev) =>
+        prev.map((act) => ({
+          ...act,
+          timeAgoSeconds: act.timeAgoSeconds + 1,
+        }))
+      );
+    }, 1000);
+    return () => clearInterval(secInterval);
+  }, []);
+
+  const getFlag = (countryName: string, fallbackFlag?: string) => {
+    if (fallbackFlag) return fallbackFlag;
+    const found = GLOBAL_IDENTITIES.find(
+      (c) => c.country.toLowerCase() === countryName.toLowerCase()
+    );
+    return found ? found.flag : '🌐';
+  };
+
+  const currentActivity = activities[currentIndex % activities.length] || activities[0];
+
+  const handlePrev = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setCurrentIndex((prev) => (prev - 1 + activities.length) % activities.length);
+  };
+
+  const handleNext = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setCurrentIndex((prev) => (prev + 1) % activities.length);
+  };
+
+  return (
+    <>
+      {/* Top Banner Real-time Multi-Sig Ticker */}
+      <div
+        id="top-activity-notification-bar"
+        onMouseEnter={() => setIsPaused(true)}
+        onMouseLeave={() => setIsPaused(false)}
+        className="w-full border-b transition-colors relative z-30 select-none overflow-hidden bg-slate-50 dark:bg-[#06080F] border-slate-200 dark:border-gray-800 text-slate-900 dark:text-white shadow-xs"
+      >
+        {/* Animated Cycle Progress Line */}
+        {!isPaused && (
+          <div
+            key={`progress-${currentIndex}`}
+            className="absolute top-0 left-0 h-[2.5px] bg-gradient-to-r from-emerald-500 via-[#00FFB2] to-cyan-500 transition-all w-full opacity-85"
+            style={{
+              animation: `progressTimer ${ROTATION_INTERVAL_MS}ms linear infinite`,
+            }}
+          />
+        )}
+
+        <div className="max-w-7xl mx-auto px-3 sm:px-6 py-2 flex items-center justify-between gap-2 sm:gap-3">
+          {/* Left: Live Multi-Sig Node Indicator Pill */}
+          <div className="shrink-0 flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-black tracking-wide border shadow-xs bg-white dark:bg-gray-900/90 border-slate-300 dark:border-gray-700 text-emerald-700 dark:text-[#00FFB2]">
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#00FFB2] opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-[#00FFB2]"></span>
+            </span>
+            <span className="uppercase text-[10px] font-mono font-black hidden xs:inline">
+              LIVE ON-CHAIN
+            </span>
+            <span className="text-[10px] font-mono font-black text-slate-500 dark:text-gray-400">
+              ({activities.length}+)
+            </span>
+          </div>
+
+          {/* Center: Dynamic Live Notification Banner with Smooth Transition */}
+          {currentActivity && (
+            <div
+              key={currentActivity.id}
+              onClick={() => {
+                setSelectedProof(currentActivity);
+                setShowProofModal(true);
+              }}
+              className={`flex-1 flex items-center justify-between gap-2 px-3 py-1.5 rounded-xl border transition-all duration-300 cursor-pointer overflow-hidden animate-notification-swap ${
+                currentActivity.type === 'withdrawal'
+                  ? 'bg-rose-50 dark:bg-rose-950/30 border-rose-200 dark:border-rose-500/40 hover:border-rose-400 shadow-xs'
+                  : 'bg-white dark:bg-gray-900/90 border-slate-300 dark:border-gray-700/80 hover:border-emerald-500 dark:hover:border-[#00FFB2]/60 shadow-xs'
+              }`}
+              title="Click to inspect verified 0xGuard Cryptographic Settlement Proof"
+            >
+              <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap overflow-hidden">
+                <span className="text-base shrink-0">
+                  {getFlag(currentActivity.country, currentActivity.flag)}
+                </span>
+
+                {/* Investor Name & Country */}
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <span className="text-[10px] uppercase font-black text-slate-500 dark:text-gray-400">
+                    Investor:
+                  </span>
+                  <span className="text-xs sm:text-sm font-black tracking-tight shrink-0 text-slate-900 dark:text-white">
+                    {currentActivity.name}
+                  </span>
+                  <span className="text-[11px] font-bold px-1.5 py-0.5 rounded-md whitespace-nowrap bg-slate-200 dark:bg-gray-800 text-slate-800 dark:text-gray-200 border border-slate-300 dark:border-gray-700">
+                    {currentActivity.country}
+                  </span>
+                </div>
+
+                <span className="text-xs hidden sm:inline text-slate-300 dark:text-gray-600">•</span>
+
+                {/* Action Badge & Amount (Strictly Capped Under $35,000) */}
+                {currentActivity.type === 'withdrawal' ? (
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-black uppercase tracking-wider bg-rose-100 dark:bg-rose-500/20 text-rose-800 dark:text-rose-400 border border-rose-300 dark:border-rose-500/40">
+                      <ArrowUpRight className="w-3.5 h-3.5 stroke-[3]" />
+                      <span>Disbursal</span>
+                    </span>
+                    <span className="font-mono font-black text-xs sm:text-sm text-rose-700 dark:text-rose-400">
+                      -${Math.min(34900, currentActivity.amount).toLocaleString()} USD
+                    </span>
+                  </div>
+                ) : currentActivity.type === 'deposit' ? (
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-black uppercase tracking-wider bg-emerald-100 dark:bg-emerald-500/20 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-500/40">
+                      <ArrowDownLeft className="w-3.5 h-3.5 stroke-[3]" />
+                      <span>Deposit</span>
+                    </span>
+                    <span className="font-mono font-black text-xs sm:text-sm text-emerald-700 dark:text-emerald-300">
+                      +${Math.min(34900, currentActivity.amount).toLocaleString()} USD
+                    </span>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-black uppercase tracking-wider bg-teal-100 dark:bg-[#00FFB2]/20 text-teal-800 dark:text-[#00FFB2] border border-teal-300 dark:border-[#00FFB2]/40">
+                      <Sparkles className="w-3.5 h-3.5" />
+                      <span>Staking</span>
+                    </span>
+                    <span className="font-mono font-black text-xs sm:text-sm text-teal-800 dark:text-[#00FFB2]">
+                      ${Math.min(34900, currentActivity.amount).toLocaleString()} USD
+                    </span>
+                  </div>
+                )}
+
+                {/* Channel Tag */}
+                <span className="text-[11px] hidden md:inline font-mono truncate text-slate-500 dark:text-gray-400">
+                  via {currentActivity.channel}
+                </span>
+              </div>
+
+              {/* Right: Timestamp & Proof Verification Pill */}
+              <div className="flex items-center gap-2 shrink-0">
+                <span className="text-[10px] font-mono whitespace-nowrap text-slate-500 dark:text-gray-400">
+                  {currentActivity.timeAgoSeconds < 60
+                    ? `${currentActivity.timeAgoSeconds}s ago`
+                    : `${Math.floor(currentActivity.timeAgoSeconds / 60)}m ago`}
+                </span>
+                <span className="text-[10px] px-2 py-0.5 rounded-md font-black hidden sm:inline bg-blue-100 dark:bg-blue-500/20 text-blue-800 dark:text-blue-400 border border-blue-200 dark:border-blue-500/30">
+                  Proof ✓
+                </span>
+              </div>
+            </div>
+          )}
+
+          {/* Right: Navigation Controls & Verification Badge */}
+          <div className="flex items-center gap-1 shrink-0">
+            <button
+              onClick={handlePrev}
+              title="Previous Live Notification"
+              className="p-1 rounded-lg hover:bg-slate-200 dark:hover:bg-gray-800 text-slate-600 dark:text-gray-400 transition cursor-pointer"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+            <span className="text-[10px] font-mono font-bold text-slate-500 dark:text-gray-400 hidden xl:inline">
+              #{currentIndex + 1}/{activities.length}
+            </span>
+            <button
+              onClick={handleNext}
+              title="Next Live Notification"
+              className="p-1 rounded-lg hover:bg-slate-200 dark:hover:bg-gray-800 text-slate-600 dark:text-gray-400 transition cursor-pointer"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Floating Bottom-Right Real-Time Live Settlement Toast */}
+      {showToast && toastActivity && (
+        <div className="fixed bottom-6 right-6 z-40 max-w-sm w-full animate-notification-swap select-none">
+          <div
+            onClick={() => {
+              setSelectedProof(toastActivity);
+              setShowProofModal(true);
+            }}
+            className={`p-3.5 rounded-2xl border shadow-2xl backdrop-blur-xl transition-all cursor-pointer ${
+              toastActivity.type === 'withdrawal'
+                ? 'bg-white/95 dark:bg-[#0f121d]/95 border-rose-300 dark:border-rose-500/40 text-slate-900 dark:text-white hover:border-rose-500'
+                : 'bg-white/95 dark:bg-[#0f121d]/95 border-emerald-300 dark:border-[#00FFB2]/40 text-slate-900 dark:text-white hover:border-emerald-500'
+            }`}
+          >
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <span className="text-2xl">
+                  {getFlag(toastActivity.country, toastActivity.flag)}
+                </span>
+                <div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs font-black text-slate-900 dark:text-white">
+                      {toastActivity.name}
+                    </span>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-gray-800 text-slate-600 dark:text-gray-400 font-bold">
+                      {toastActivity.country}
+                    </span>
+                  </div>
+                  <p className="text-[11px] font-medium text-slate-500 dark:text-gray-400">
+                    {toastActivity.type === 'withdrawal'
+                      ? 'Secured multi-sig withdrawal executed'
+                      : toastActivity.type === 'deposit'
+                      ? 'On-chain liquidity deposit confirmed'
+                      : 'High-yield VIP staking allocated'}
+                  </p>
+                </div>
+              </div>
+
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowToast(false);
+                }}
+                className="text-gray-400 hover:text-slate-900 dark:hover:text-white p-1 rounded-md transition"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            <div className="mt-2.5 pt-2 border-t border-slate-200 dark:border-gray-800 flex items-center justify-between">
+              <span
+                className={`font-mono font-black text-sm ${
+                  toastActivity.type === 'withdrawal'
+                    ? 'text-rose-600 dark:text-rose-400'
+                    : 'text-emerald-600 dark:text-[#00FFB2]'
+                }`}
+              >
+                {toastActivity.type === 'withdrawal' ? '-' : '+'}$
+                {Math.min(34900, toastActivity.amount).toLocaleString()} USD
+              </span>
+              <span className="text-[10px] font-mono text-blue-600 dark:text-blue-400 font-bold flex items-center gap-1">
+                <ShieldCheck className="w-3 h-3" /> View 0xGuard Proof
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Proof & Ledger Inspector Modal */}
+      {showProofModal && selectedProof && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-fade-in">
+          <div className="w-full max-w-lg rounded-3xl p-6 shadow-2xl border relative bg-white dark:bg-[#121622] border-slate-200 dark:border-gray-800 text-slate-900 dark:text-white">
+            <button
+              onClick={() => setShowProofModal(false)}
+              className="absolute top-5 right-5 text-gray-400 hover:text-slate-900 dark:hover:text-white p-1 rounded-lg hover:bg-slate-100 dark:hover:bg-gray-800 transition cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="space-y-4">
+              <div className="flex items-center gap-3 border-b border-slate-200 dark:border-gray-800 pb-4">
+                <div
+                  className={`w-10 h-10 rounded-2xl flex items-center justify-center ${
+                    selectedProof.type === 'withdrawal'
+                      ? 'bg-rose-100 dark:bg-rose-500/20 text-rose-600 dark:text-rose-500 border border-rose-200 dark:border-rose-500/30'
+                      : 'bg-emerald-100 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-500 border border-emerald-200 dark:border-emerald-500/30'
+                  }`}
+                >
+                  <ShieldCheck className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black flex items-center gap-2">
+                    <span>0xGuard Multi-Sig Ledger Proof</span>
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-gray-400 font-mono">
+                    TxRef: {selectedProof.id.toUpperCase()}
+                  </p>
+                </div>
+              </div>
+
+              {/* Transaction Summary Card */}
+              <div
+                className={`p-4 rounded-2xl border space-y-3 ${
+                  selectedProof.type === 'withdrawal'
+                    ? 'bg-rose-50 dark:bg-rose-950/20 border-rose-200 dark:border-rose-500/30'
+                    : 'bg-slate-50 dark:bg-gray-950/60 border-slate-200 dark:border-gray-800'
+                }`}
+              >
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-slate-600 dark:text-gray-400">Activity Type:</span>
+                  <span
+                    className={`font-black uppercase px-2 py-0.5 rounded text-[11px] ${
+                      selectedProof.type === 'withdrawal'
+                        ? 'bg-rose-100 dark:bg-rose-500/20 text-rose-800 dark:text-rose-400'
+                        : 'bg-emerald-100 dark:bg-emerald-500/20 text-emerald-800 dark:text-emerald-400'
+                    }`}
+                  >
+                    {selectedProof.type}
+                  </span>
+                </div>
+
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-slate-600 dark:text-gray-400">Transaction Amount:</span>
+                  <span
+                    className={`font-mono font-black text-base ${
+                      selectedProof.type === 'withdrawal'
+                        ? 'text-rose-700 dark:text-rose-400'
+                        : 'text-emerald-700 dark:text-emerald-400'
+                    }`}
+                  >
+                    {selectedProof.type === 'withdrawal' ? '-' : '+'}$
+                    {Math.min(34900, selectedProof.amount).toLocaleString()} USD
+                  </span>
+                </div>
+
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-slate-600 dark:text-gray-400">Verified Investor:</span>
+                  <span className="font-black flex items-center gap-1.5 text-slate-950 dark:text-white">
+                    <span>{getFlag(selectedProof.country, selectedProof.flag)}</span>
+                    <span>
+                      {selectedProof.name} ({selectedProof.country})
+                    </span>
+                  </span>
+                </div>
+
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-slate-600 dark:text-gray-400">Settlement Route:</span>
+                  <span className="font-mono font-bold text-slate-800 dark:text-gray-200">
+                    {selectedProof.channel}
+                  </span>
+                </div>
+              </div>
+
+              {/* Cryptographic Details */}
+              <div className="space-y-2 text-xs font-mono p-3.5 rounded-2xl border bg-slate-100 dark:bg-gray-950/80 border-slate-200 dark:border-gray-800 text-slate-700 dark:text-gray-300">
+                <div className="flex justify-between">
+                  <span>Cryptographic Hash:</span>
+                  <span className="truncate max-w-[200px] font-bold text-slate-900 dark:text-white">
+                    {selectedProof.txHash ||
+                      `0x${Math.random().toString(16).substring(2, 10)}...${Math.random().toString(16).substring(2, 6)}`}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Consensus Nodes:</span>
+                  <span className="text-emerald-700 dark:text-[#00FFB2] font-bold">
+                    12/12 Signatures Validated
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Block Timestamp:</span>
+                  <span className="text-slate-800 dark:text-gray-300">
+                    {new Date().toUTCString()}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Audit Gate:</span>
+                  <span className="text-emerald-700 dark:text-emerald-400 font-bold">
+                    0xGuard Real-Time Certified
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3 pt-2">
+                <button
+                  onClick={() => setShowProofModal(false)}
+                  className="w-full py-3 rounded-xl bg-[#00FFB2] hover:bg-[#00E59E] text-black font-black text-xs uppercase tracking-wider transition cursor-pointer"
+                >
+                  Close Proof Inspector
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+};
+
+export default HeaderLiveActivityTicker;

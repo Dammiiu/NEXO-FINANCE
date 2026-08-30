@@ -1,0 +1,8 @@
+{
+  "name": "Nexo Finance",
+  "description": "High-yield crypto investment, staking, and institutional trading platform with real-time Binance price feed, KYC tier verification, and automated profit returns.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
