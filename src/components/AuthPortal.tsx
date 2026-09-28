@@ -91,8 +91,9 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
+  const [authLoadingType, setAuthLoadingType] = useState<'email' | 'google' | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
   const googleBtnRef = useRef<HTMLDivElement>(null);
   const gsiReadyRef = useRef(false);
 
@@ -146,12 +147,12 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
   // ─── Called by Google with a signed JWT credential ───────────────────────────
   const handleGoogleCredential = async (response: { credential: string }) => {
     setErrorMessage(null);
-    setIsLoading(true);
+    setAuthLoadingType('google');
 
     const payload = parseJwt(response.credential);
     if (!payload || !payload.email) {
       setErrorMessage('Google sign-in failed. Could not retrieve account details.');
-      setIsLoading(false);
+      setAuthLoadingType(null);
       return;
     }
 
@@ -230,7 +231,7 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
       };
       onAuthSuccess(fallbackUser, `token_${fallbackUser.uid}_${Date.now()}`);
     } finally {
-      setIsLoading(false);
+      setAuthLoadingType(null);
     }
   };
 
@@ -238,7 +239,7 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage(null);
-    setIsLoading(true);
+    setAuthLoadingType('email');
 
     const userEmail = email.trim();
     const userName = fullName.trim() || userEmail.split('@')[0];
@@ -268,7 +269,7 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
     } catch {
       setErrorMessage('Network error. Please check your connection and try again.');
     } finally {
-      setIsLoading(false);
+      setAuthLoadingType(null);
     }
   };
 
@@ -372,7 +373,7 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
 
             {/* ── Real Google Sign-In Button (rendered by GSI SDK) ──────────── */}
             <div className="w-full flex justify-center mb-4">
-              {isLoading ? (
+              {authLoadingType === 'google' ? (
                 <div className={`w-full py-3 rounded-full border flex items-center justify-center gap-2 text-xs font-bold ${
                   isDark ? 'bg-gray-900 border-gray-700 text-gray-300' : 'bg-white border-slate-300 text-slate-600'
                 }`}>
@@ -476,10 +477,10 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
 
               <button
                 type="submit"
-                disabled={isLoading}
+                disabled={authLoadingType !== null}
                 className="w-full py-3.5 rounded-2xl bg-[#00FFB2] hover:bg-[#00E59E] active:scale-[0.99] text-black font-black text-xs uppercase tracking-wider transition shadow-lg shadow-[#00FFB2]/20 flex items-center justify-center gap-2 cursor-pointer mt-2 disabled:opacity-60"
               >
-                {isLoading ? (
+                {authLoadingType === 'email' ? (
                   <>
                     <span className="animate-spin w-3.5 h-3.5 border-2 border-black border-t-transparent rounded-full" />
                     <span>Authenticating...</span>
