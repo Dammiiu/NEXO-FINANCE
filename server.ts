@@ -12,6 +12,17 @@ const PORT = 3000;
 app.use(cors());
 app.use(express.json());
 
+// Normalize Netlify function rewrite URLs so /api routes match consistently
+app.use((req, _res, next) => {
+  if (req.url.startsWith('/.netlify/functions/api')) {
+    req.url = req.url.replace('/.netlify/functions/api', '') || '/';
+  }
+  if (!req.url.startsWith('/api') && req.url !== '/' && !req.url.startsWith('/assets')) {
+    req.url = '/api' + req.url;
+  }
+  next();
+});
+
 // In-Memory Database Store
 interface DBUser {
   uid: string;
@@ -1015,6 +1026,14 @@ app.post('/api/kyc/submit', (req, res) => {
   res.status(201).json({ message: 'KYC Document submitted for compliance verification', document: newDoc, user });
 });
 
+// KYC Documents Retrieval
+app.get('/api/kyc/my-documents', (req, res) => {
+  const user = getAuthUser(req);
+  if (!user) return res.status(401).json({ error: 'Unauthorized' });
+  const docs = kycDocsStore.filter((d) => d.userId === user.uid);
+  res.json(docs);
+});
+
 // Staking / Investment Route
 app.post('/api/user/stake', (req, res) => {
   const user = getAuthUser(req);
@@ -1117,6 +1136,273 @@ app.post('/api/user/trade', (req, res) => {
   transactionsStore.unshift(newTx);
 
   res.json({ message: `Spot trade for ${symbol} executed successfully`, user });
+});
+
+// ---------------------------------------------------------------------------------
+// INVESTMENT & TRADING PORTFOLIO ROUTES
+// ---------------------------------------------------------------------------------
+interface DBInvestment {
+  id: string;
+  userId: string;
+  planId: string;
+  planName: string;
+  amount: number;
+  durationDays: number;
+  dailyProfitPercent: number;
+  startDate: string;
+  endDate: string;
+  totalAccruedProfit: number;
+  status: 'active' | 'completed';
+  lastClaimDate?: string;
+}
+
+let investmentsStore: DBInvestment[] = [
+  {
+    id: 'inv_inst_01',
+    userId: 'usr_institutional_01',
+    planId: 'institutional-vault',
+    planName: 'Institutional High-Yield Alpha Vault',
+    amount: 35000,
+    durationDays: 30,
+    dailyProfitPercent: 3.2,
+    startDate: new Date(Date.now() - 5 * 86400000).toISOString(),
+    endDate: new Date(Date.now() + 25 * 86400000).toISOString(),
+    totalAccruedProfit: 5600,
+    status: 'active',
+  },
+];
+
+app.get('/api/investments/mine', (req, res) => {
+  const user = getAuthUser(req);
+  if (!user) return res.status(401).json({ error: 'Unauthorized' });
+  const myInvestments = investmentsStore.filter((inv) => inv.userId === user.uid);
+  res.json(myInvestments);
+});
+
+app.post('/api/investments/create', (req, res) => {
+  const user = getAuthUser(req);
+  if (!user) return res.status(401).json({ error: 'Unauthorized' });
+  const { planId, planName, amount, durationDays, dailyProfitPercent } = req.body;
+  const numAmount = parseFloat(amount);
+  if (isNaN(numAmount) || numAmount <= 0) {
+    return res.status(400).json({ error: 'Invalid investment amount' });
+  }
+  if (numAmount > user.balance) {
+    return res.status(400).json({ error: 'Insufficient liquid balance' });
+  }
+  user.balance -= numAmount;
+  user.stakedBalance = (user.stakedBalance || 0) + numAmount;
+  const days = durationDays || 30;
+  const newSub: DBInvestment = {
+    id: `inv_${Date.now()}`,
+    userId: user.uid,
+    planId: planId || 'custom-plan',
+    planName: planName || 'Yield Plan',
+    amount: numAmount,
+    durationDays: days,
+    dailyProfitPercent: dailyProfitPercent || 2.5,
+    startDate: new Date().toISOString(),
+    endDate: new Date(Date.now() + days * 86400000).toISOString(),
+    totalAccruedProfit: 0,
+    status: 'active',
+  };
+  investmentsStore.unshift(newSub);
+  const newTx: DBTransaction = {
+    id: `tx_inv_${Date.now()}`,
+    userId: user.uid,
+    userEmail: user.email,
+    type: 'investment',
+    amount: numAmount,
+    coin: `${planName || 'Investment Vault'}`,
+    status: 'approved',
+    createdAt: new Date().toISOString(),
+    details: `Allocated $${numAmount.toLocaleString()} to ${planName}`,
+  };
+  transactionsStore.unshift(newTx);
+  res.status(201).json({ message: 'Investment activated successfully', subscription: newSub, user });
+});
+
+app.post('/api/investments/claim/:id', (req, res) => {
+  const user = getAuthUser(req);
+  if (!user) return res.status(401).json({ error: 'Unauthorized' });
+  const sub = investmentsStore.find((s) => s.id === req.params.id && s.userId === user.uid);
+  if (!sub) return res.status(404).json({ error: 'Investment not found' });
+  const accrued = sub.totalAccruedProfit > 0 ? sub.totalAccruedProfit : (sub.amount * (sub.dailyProfitPercent / 100));
+  sub.totalAccruedProfit = 0;
+  sub.lastClaimDate = new Date().toISOString();
+  user.balance += accrued;
+  user.profitBalance = Math.max(0, (user.profitBalance || 0) - accrued);
+  const newTx: DBTransaction = {
+    id: `tx_clm_${Date.now()}`,
+    userId: user.uid,
+    userEmail: user.email,
+    type: 'profit',
+    amount: accrued,
+    coin: `${sub.planName} Yield Harvest`,
+    status: 'approved',
+    createdAt: new Date().toISOString(),
+    details: `Harvested yield of $${accrued.toFixed(2)} credited to balance`,
+  };
+  transactionsStore.unshift(newTx);
+  res.json({ message: `Harvested $${accrued.toFixed(2)} in yields!`, user });
+});
+
+interface DBHolding {
+  symbol: string;
+  name: string;
+  amount: number;
+  avgBuyPrice: number;
+  totalValue: number;
+}
+interface DBOrder {
+  id: string;
+  userId: string;
+  symbol: string;
+  type: 'buy' | 'sell';
+  amountUsd: number;
+  cryptoAmount: number;
+  price: number;
+  date: string;
+}
+
+let holdingsStore: Record<string, DBHolding[]> = {
+  usr_institutional_01: [
+    { symbol: 'BTC', name: 'Bitcoin', amount: 0.45, avgBuyPrice: 91200, totalValue: 41040 },
+    { symbol: 'ETH', name: 'Ethereum', amount: 3.2, avgBuyPrice: 2650, totalValue: 8480 },
+    { symbol: 'SOL', name: 'Solana', amount: 15.0, avgBuyPrice: 185, totalValue: 2775 },
+  ],
+};
+let ordersStore: DBOrder[] = [
+  {
+    id: 'ord_01',
+    userId: 'usr_institutional_01',
+    symbol: 'BTC',
+    type: 'buy',
+    amountUsd: 15000,
+    cryptoAmount: 0.165,
+    price: 90900,
+    date: new Date(Date.now() - 2 * 86400000).toISOString(),
+  },
+];
+
+app.get('/api/trade/portfolio', (req, res) => {
+  const user = getAuthUser(req);
+  if (!user) return res.status(401).json({ error: 'Unauthorized' });
+  const holdings = holdingsStore[user.uid] || [];
+  res.json({ holdings });
+});
+
+app.get('/api/trade/history', (req, res) => {
+  const user = getAuthUser(req);
+  if (!user) return res.status(401).json({ error: 'Unauthorized' });
+  const orders = ordersStore.filter((o) => o.userId === user.uid);
+  res.json(orders);
+});
+
+app.post('/api/trade/buy', (req, res) => {
+  const user = getAuthUser(req);
+  if (!user) return res.status(401).json({ error: 'Unauthorized' });
+  const { symbol, coinName, amountUsd, cryptoAmount, price } = req.body;
+  const usd = parseFloat(amountUsd);
+  if (isNaN(usd) || usd <= 0) return res.status(400).json({ error: 'Invalid trade volume' });
+  if (usd > user.balance) return res.status(400).json({ error: 'Insufficient balance' });
+  user.balance -= usd;
+
+  const cryptoQty = parseFloat(cryptoAmount) || (price > 0 ? usd / price : 0);
+  if (!holdingsStore[user.uid]) holdingsStore[user.uid] = [];
+  const existing = holdingsStore[user.uid].find((h) => h.symbol === symbol);
+  if (existing) {
+    const totalCost = existing.amount * existing.avgBuyPrice + usd;
+    existing.amount += cryptoQty;
+    existing.avgBuyPrice = existing.amount > 0 ? totalCost / existing.amount : price;
+    existing.totalValue = existing.amount * (price || existing.avgBuyPrice);
+  } else {
+    holdingsStore[user.uid].push({
+      symbol,
+      name: coinName || symbol,
+      amount: cryptoQty,
+      avgBuyPrice: price || 0,
+      totalValue: usd,
+    });
+  }
+
+  const order: DBOrder = {
+    id: `ord_${Date.now()}`,
+    userId: user.uid,
+    symbol,
+    type: 'buy',
+    amountUsd: usd,
+    cryptoAmount: cryptoQty,
+    price: price || 0,
+    date: new Date().toISOString(),
+  };
+  ordersStore.unshift(order);
+
+  const newTx: DBTransaction = {
+    id: `tx_buy_${Date.now()}`,
+    userId: user.uid,
+    userEmail: user.email,
+    type: 'trade_buy',
+    amount: usd,
+    coin: `${symbol} Spot Buy`,
+    cryptoAmount: cryptoQty,
+    status: 'approved',
+    createdAt: new Date().toISOString(),
+    details: `Executed Market Buy for ${cryptoQty.toFixed(4)} ${symbol} @ $${price}`,
+  };
+  transactionsStore.unshift(newTx);
+  res.json({ message: `Successfully bought ${cryptoQty.toFixed(4)} ${symbol}`, user, holdings: holdingsStore[user.uid] });
+});
+
+app.post('/api/trade/sell', (req, res) => {
+  const user = getAuthUser(req);
+  if (!user) return res.status(401).json({ error: 'Unauthorized' });
+  const { symbol, amountUsd, cryptoAmount, price } = req.body;
+  const usd = parseFloat(amountUsd);
+  if (isNaN(usd) || usd <= 0) return res.status(400).json({ error: 'Invalid trade volume' });
+
+  const userHoldings = holdingsStore[user.uid] || [];
+  const existing = userHoldings.find((h) => h.symbol === symbol);
+  const cryptoQty = parseFloat(cryptoAmount) || (price > 0 ? usd / price : 0);
+
+  if (!existing || existing.amount < cryptoQty) {
+    return res.status(400).json({ error: `Insufficient ${symbol} holding to execute sell order` });
+  }
+
+  existing.amount -= cryptoQty;
+  existing.totalValue = existing.amount * (price || existing.avgBuyPrice);
+  if (existing.amount <= 0.000001) {
+    holdingsStore[user.uid] = userHoldings.filter((h) => h.symbol !== symbol);
+  }
+
+  user.balance += usd;
+
+  const order: DBOrder = {
+    id: `ord_${Date.now()}`,
+    userId: user.uid,
+    symbol,
+    type: 'sell',
+    amountUsd: usd,
+    cryptoAmount: cryptoQty,
+    price: price || 0,
+    date: new Date().toISOString(),
+  };
+  ordersStore.unshift(order);
+
+  const newTx: DBTransaction = {
+    id: `tx_sell_${Date.now()}`,
+    userId: user.uid,
+    userEmail: user.email,
+    type: 'trade_sell',
+    amount: usd,
+    coin: `${symbol} Spot Sell`,
+    cryptoAmount: cryptoQty,
+    status: 'approved',
+    createdAt: new Date().toISOString(),
+    details: `Executed Market Sell for ${cryptoQty.toFixed(4)} ${symbol} @ $${price}`,
+  };
+  transactionsStore.unshift(newTx);
+  res.json({ message: `Successfully sold ${cryptoQty.toFixed(4)} ${symbol}`, user, holdings: holdingsStore[user.uid] });
 });
 
 // ---------------------------------------------------------------------------------
@@ -1517,7 +1803,19 @@ async function startServer() {
   });
 }
 
-startServer().catch((err) => {
-  console.error('Failed to start server:', err);
-});
+const isServerless = Boolean(
+  process.env.NETLIFY ||
+  process.env.AWS_LAMBDA_FUNCTION_NAME ||
+  process.env.LAMBDA_TASK_ROOT ||
+  process.env.VERCEL
+);
+
+if (!isServerless) {
+  startServer().catch((err) => {
+    console.error('Failed to start server:', err);
+  });
+}
+
+export default app;
+export { app };
 
