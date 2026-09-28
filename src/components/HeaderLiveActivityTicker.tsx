@@ -259,7 +259,7 @@ export const HeaderLiveActivityTicker: React.FC<HeaderLiveActivityTickerProps> =
 
       {/* Floating Bottom-Right Real-Time Live Settlement Toast */}
       {showToast && toastActivity && (
-        <div className="fixed bottom-6 right-6 z-40 max-w-sm w-full animate-notification-swap select-none">
+        <div className="hidden sm:block fixed bottom-6 right-6 z-40 max-w-sm w-full animate-notification-swap select-none">
           <div
             onClick={() => {
               setSelectedProof(toastActivity);

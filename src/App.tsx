@@ -25,7 +25,9 @@ import {
   CheckCircle2,
   AlertCircle,
   X,
+  Menu,
 } from 'lucide-react';
+import { AuthPortal } from './components/AuthPortal';
 import { AreaChart } from './components/AreaChart';
 import { Sparkline } from './components/Sparkline';
 import { HeaderLiveActivityTicker } from './components/HeaderLiveActivityTicker';
@@ -132,23 +134,25 @@ export const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<string>('portfolio');
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
   const [prices, setPrices] = useState<Record<string, CryptoAsset>>(INITIAL_ASSETS);
-  const [user, setUser] = useState<UserProfile>(() => {
+  const [user, setUser] = useState<UserProfile | null>(() => {
     const saved = localStorage.getItem('nexo_user');
-    if (saved) {
+    const token = localStorage.getItem('nexo_authToken');
+    if (saved && token) {
       try {
         return JSON.parse(saved);
       } catch {
-        return DEFAULT_USER;
+        return null;
       }
     }
-    return DEFAULT_USER;
+    return null;
   });
   const [authToken, setAuthToken] = useState<string>(() => {
-    return localStorage.getItem('nexo_authToken') || 'demo-jwt-token-institutional';
+    return localStorage.getItem('nexo_authToken') || '';
   });
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [globalBanner, setGlobalBanner] = useState<string>('');
   const [isAdminOpen, setIsAdminOpen] = useState(false);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
  
   // Auth Modal State
   const [showAuthModal, setShowAuthModal] = useState(false);
@@ -160,6 +164,7 @@ export const App: React.FC = () => {
  
   // Fetch initial profile and transactions
   const fetchUserData = async () => {
+    if (!authToken) return;
     try {
       const res = await fetch('/api/user/profile', {
         headers: { Authorization: `Bearer ${authToken}` },
@@ -175,6 +180,7 @@ export const App: React.FC = () => {
   };
 
   const fetchTransactions = async () => {
+    if (!authToken) return;
     try {
       const res = await fetch('/api/transactions/history', {
         headers: { Authorization: `Bearer ${authToken}` },
@@ -211,9 +217,11 @@ export const App: React.FC = () => {
   }, [theme]);
 
   useEffect(() => {
-    fetchUserData();
-    fetchTransactions();
-    fetchGlobalSettings();
+    if (authToken) {
+      fetchUserData();
+      fetchTransactions();
+      fetchGlobalSettings();
+    }
   }, [authToken]);
 
   // Live Binance WebSocket / Polling Stream
@@ -353,20 +361,30 @@ export const App: React.FC = () => {
   };
 
   const handleLogout = () => {
-    setUser({
-      ...DEFAULT_USER,
-      balance: 0,
-      profitBalance: 0,
-      stakedBalance: 0,
-      fullName: 'Guest Account',
-      email: 'guest@nexo-client.com',
-      isAdmin: false,
-    });
+    setUser(null);
     setAuthToken('');
     localStorage.removeItem('nexo_user');
     localStorage.removeItem('nexo_authToken');
-    setShowAuthModal(true);
+    setIsAdminOpen(false);
+    setIsMobileMenuOpen(false);
   };
+
+  const handleAuthSuccess = (authUser: UserProfile, token: string) => {
+    setUser(authUser);
+    setAuthToken(token);
+    localStorage.setItem('nexo_user', JSON.stringify(authUser));
+    localStorage.setItem('nexo_authToken', token);
+  };
+
+  if (!authToken || !user) {
+    return (
+      <AuthPortal
+        theme={theme}
+        onToggleTheme={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+        onAuthSuccess={handleAuthSuccess}
+      />
+    );
+  }
 
   const cryptoPriceList = Object.values(prices);
 
@@ -475,121 +493,69 @@ export const App: React.FC = () => {
 
           {/* Right Header Controls: Theme Toggle, User Profile OR Sign In */}
           <div className="flex items-center gap-2 sm:gap-3">
-            {/* Theme Toggle Button */}
+            {/* Verified Badge (desktop) */}
+            <div className="hidden lg:flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-[10px] font-black uppercase">
+              <CheckCircle2 className="w-3 h-3" />
+              <span>Tier 2 Verified</span>
+            </div>
+
+            {/* User Profile Chip - Displayed when signed in */}
             <button
-              onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-              className={`p-2 rounded-xl border transition cursor-pointer ${
+              onClick={() => {
+                setActiveTab('profile');
+                setIsAdminOpen(false);
+              }}
+              className={`flex items-center gap-2 p-1.5 pr-2.5 sm:pr-3 rounded-2xl border transition cursor-pointer ${
                 theme === 'dark'
-                  ? 'bg-[#121622] border-gray-800 text-gray-300 hover:text-white'
-                  : 'bg-slate-100 border-slate-200 text-slate-700 hover:text-slate-950'
+                  ? 'bg-[#121622] border-gray-800 hover:border-gray-700'
+                  : 'bg-white border-slate-200 hover:border-slate-300 shadow-xs'
               }`}
-              title="Toggle Theme"
+              title="Manage Account Settings & Security"
             >
-              {theme === 'dark' ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4 text-slate-700" />}
+              <div className="w-7 h-7 rounded-xl bg-[#00FFB2]/20 border border-[#00FFB2]/40 flex items-center justify-center text-xs font-black text-[#00FFB2]">
+                {user.fullName ? user.fullName[0].toUpperCase() : 'U'}
+              </div>
+              <div className="text-left hidden sm:block">
+                <span className="text-[11px] font-black block leading-tight font-mono text-slate-900 dark:text-white">
+                  ${user.balance.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                </span>
+                <span className="text-[9px] text-emerald-600 dark:text-[#00FFB2] font-extrabold block leading-tight">
+                  {user.fullName.split(' ')[0]} (Active)
+                </span>
+              </div>
             </button>
 
-            {/* ONLY SHOW Sign In if user is NOT authenticated */}
-            {(!authToken || user?.email === 'guest@nexo-client.com') && (
-              <button
-                onClick={() => {
-                  setShowAuthModal(true);
-                  setAuthMode('login');
-                }}
-                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-[#00FFB2] text-black font-black text-xs hover:bg-[#00E59E] transition cursor-pointer shadow-sm"
-                title="Sign In or Register"
-              >
-                <Lock className="w-3 h-3 stroke-[2.5]" />
-                <span>Sign In</span>
-              </button>
-            )}
-
-            {user?.isAdmin && (
+            {/* Admin shortcut on mobile */}
+            {user.isAdmin && (
               <button
                 onClick={() => setIsAdminOpen(!isAdminOpen)}
-                className="xl:hidden p-2 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-500 dark:text-rose-400 text-xs font-bold flex items-center gap-1 cursor-pointer"
+                className={`xl:hidden p-2 rounded-xl text-xs font-bold flex items-center gap-1 cursor-pointer transition ${
+                  isAdminOpen
+                    ? 'bg-rose-500 text-white'
+                    : 'bg-rose-500/10 border border-rose-500/20 text-rose-500 dark:text-rose-400'
+                }`}
+                title="Admin Control Suite"
               >
                 <ShieldAlert className="w-4 h-4" />
               </button>
             )}
 
-            {/* User Profile Chip - Displayed when signed in */}
-            {Boolean(authToken && user?.email && user?.email !== 'guest@nexo-client.com') && (
-              <div className="flex items-center gap-2">
-                <div className="hidden lg:flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-700 dark:text-emerald-400 text-[10px] font-black uppercase">
-                  <CheckCircle2 className="w-3 h-3" />
-                  <span>Tier 2 Verified</span>
-                </div>
-
-                <button
-                  onClick={() => {
-                    setActiveTab('profile');
-                    setIsAdminOpen(false);
-                  }}
-                  className={`flex items-center gap-2 p-1.5 pr-3 rounded-2xl border transition cursor-pointer ${
-                    theme === 'dark'
-                      ? 'bg-[#121622] border-gray-800 hover:border-gray-700'
-                      : 'bg-white border-slate-200 hover:border-slate-300 shadow-xs'
-                  }`}
-                  title="Manage Account Settings & Security"
-                >
-                  <div className="w-7 h-7 rounded-xl bg-[#00FFB2]/20 border border-[#00FFB2]/40 flex items-center justify-center text-xs font-black text-[#00FFB2]">
-                    {user?.fullName ? user.fullName[0].toUpperCase() : 'U'}
-                  </div>
-                  <div className="text-left hidden sm:block">
-                    <span className="text-[11px] font-black block leading-tight font-mono text-slate-900 dark:text-white">
-                      ${(user?.balance ?? 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                    </span>
-                    <span className="text-[9px] text-emerald-600 dark:text-[#00FFB2] font-extrabold block leading-tight">
-                      {user?.fullName ? user.fullName.split(' ')[0] : 'Account'} (Active)
-                    </span>
-                  </div>
-                </button>
-              </div>
-            )}
+            {/* Logout shortcut */}
+            <button
+              onClick={handleLogout}
+              className={`p-2 rounded-xl border transition cursor-pointer text-slate-400 hover:text-red-500 hover:border-red-500/30 ${
+                theme === 'dark' ? 'bg-[#121622] border-gray-800' : 'bg-slate-100 border-slate-200'
+              }`}
+              title="Sign Out"
+            >
+              <LogOut className="w-4 h-4" />
+            </button>
           </div>
-        </div>
-
-        {/* Mobile Navigation Scrollbar */}
-        <div
-          className={`xl:hidden flex items-center overflow-x-auto no-scrollbar gap-2 px-4 py-2 border-t ${
-            theme === 'dark' ? 'bg-[#0B0E17] border-gray-900' : 'bg-slate-100 border-slate-200'
-          }`}
-        >
-          {[
-            { id: 'portfolio', label: 'Portfolio' },
-            { id: 'trade', label: 'Trade' },
-            { id: 'invest', label: 'Invest' },
-            { id: 'deposit', label: 'Deposit' },
-            { id: 'withdraw', label: 'Withdraw' },
-            { id: 'kyc', label: 'KYC' },
-            { id: 'transactions', label: 'Ledger' },
-            { id: 'profile', label: 'Account' },
-          ].map((tab) => {
-            const isActive = activeTab === tab.id && !isAdminOpen;
-            return (
-              <button
-                key={tab.id}
-                onClick={() => {
-                  setActiveTab(tab.id);
-                  setIsAdminOpen(false);
-                }}
-                className={`px-3 py-1 rounded-xl text-xs font-bold whitespace-nowrap transition ${
-                  isActive
-                    ? 'bg-[#00FFB2] text-black shadow-md'
-                    : theme === 'dark'
-                    ? 'bg-gray-900 text-gray-400'
-                    : 'bg-white text-slate-700'
-                }`}
-              >
-                {tab.label}
-              </button>
-            );
-          })}
         </div>
       </header>
 
       {/* Main Content Area */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-8 pb-28 xl:pb-12">
         {/* Admin Suite Overlay View */}
         {isAdminOpen ? (
           <AdminPanel
@@ -681,130 +647,187 @@ export const App: React.FC = () => {
         )}
       </main>
 
-      {/* Auth Modal (Login / Sign Up) */}
-      {showAuthModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-md animate-fade-in">
-          <div
-            className={`w-full max-w-md rounded-3xl p-6 sm:p-8 shadow-2xl border relative ${
-              theme === 'dark' ? 'bg-[#121622] border-gray-800 text-white' : 'bg-white border-slate-200 text-slate-900'
+      {/* Mobile Bottom Navigation Bar (Sticky at bottom on small screens) */}
+      <nav
+        className={`xl:hidden fixed bottom-0 inset-x-0 z-40 border-t backdrop-blur-xl transition-colors duration-200 ${
+          theme === 'dark'
+            ? 'bg-[#0B0E17]/95 border-gray-800 text-gray-400'
+            : 'bg-white/95 border-slate-200 text-slate-600 shadow-lg'
+        }`}
+      >
+        <div className="grid grid-cols-5 h-16 items-center px-1">
+          {[
+            { id: 'portfolio', label: 'Portfolio', icon: Wallet },
+            { id: 'trade', label: 'Trade', icon: TrendingUp },
+            { id: 'invest', label: 'Invest', icon: Sparkles },
+            { id: 'deposit', label: 'Deposit', icon: ArrowDownLeft },
+          ].map((item) => {
+            const Icon = item.icon;
+            const isActive = activeTab === item.id && !isAdminOpen && !isMobileMenuOpen;
+            return (
+              <button
+                key={item.id}
+                onClick={() => {
+                  setActiveTab(item.id);
+                  setIsAdminOpen(false);
+                  setIsMobileMenuOpen(false);
+                }}
+                className={`flex flex-col items-center justify-center gap-1 h-full py-1 cursor-pointer transition ${
+                  isActive
+                    ? 'text-[#00FFB2] font-black'
+                    : theme === 'dark'
+                    ? 'text-gray-400 hover:text-white'
+                    : 'text-slate-500 hover:text-slate-900'
+                }`}
+              >
+                <div
+                  className={`p-1 rounded-xl transition ${
+                    isActive ? 'bg-[#00FFB2]/15 text-[#00FFB2]' : ''
+                  }`}
+                >
+                  <Icon className="w-5 h-5 stroke-[2.2]" />
+                </div>
+                <span className="text-[10px] tracking-tight">{item.label}</span>
+              </button>
+            );
+          })}
+
+          {/* More / Menu Drawer Toggle Button */}
+          <button
+            onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+            className={`flex flex-col items-center justify-center gap-1 h-full py-1 cursor-pointer transition relative ${
+              isMobileMenuOpen ||
+              ['withdraw', 'kyc', 'transactions', 'profile'].includes(activeTab) ||
+              isAdminOpen
+                ? 'text-[#00FFB2] font-black'
+                : theme === 'dark'
+                ? 'text-gray-400 hover:text-white'
+                : 'text-slate-500 hover:text-slate-900'
             }`}
           >
-            <button
-              onClick={() => setShowAuthModal(false)}
-              className="absolute top-5 right-5 text-gray-400 hover:text-white p-1 rounded-lg hover:bg-gray-800"
+            <div
+              className={`p-1 rounded-xl transition ${
+                isMobileMenuOpen ? 'bg-[#00FFB2]/15 text-[#00FFB2]' : ''
+              }`}
             >
-              <X className="w-5 h-5" />
-            </button>
+              <Menu className="w-5 h-5 stroke-[2.2]" />
+            </div>
+            <span className="text-[10px] tracking-tight">Menu</span>
+            {user.isAdmin && (
+              <span className="absolute top-2 right-4 w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
+            )}
+          </button>
+        </div>
+      </nav>
 
-            <div className="space-y-4">
-              <div className="text-center space-y-1">
-                <div className="w-12 h-12 rounded-2xl bg-[#00FFB2]/10 border border-[#00FFB2]/30 flex items-center justify-center mx-auto text-[#00FFB2] mb-2">
-                  <Lock className="w-6 h-6" />
+      {/* Mobile Slide-up Menu Drawer */}
+      {isMobileMenuOpen && (
+        <div className="xl:hidden fixed inset-0 z-50 flex flex-col justify-end bg-black/70 backdrop-blur-xs animate-fade-in">
+          <div
+            className="fixed inset-0"
+            onClick={() => setIsMobileMenuOpen(false)}
+          />
+          <div
+            className={`relative z-10 w-full rounded-t-3xl border-t p-5 pb-8 shadow-2xl max-h-[85vh] overflow-y-auto ${
+              theme === 'dark'
+                ? 'bg-[#121622] border-gray-800 text-white'
+                : 'bg-white border-slate-200 text-slate-900'
+            }`}
+          >
+            <div className="w-12 h-1.5 rounded-full bg-gray-600/40 mx-auto mb-4" />
+
+            {/* User identity card */}
+            <div className="flex items-center justify-between pb-4 mb-4 border-b border-gray-800/80">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-[#00FFB2]/20 border border-[#00FFB2]/40 flex items-center justify-center font-black text-[#00FFB2]">
+                  {user.fullName ? user.fullName[0].toUpperCase() : 'U'}
                 </div>
-                <h3 className="text-xl font-black">
-                  {authMode === 'login' ? 'Institutional Sign In' : 'Open Vault Account'}
-                </h3>
-                <p className="text-xs text-gray-400">Access your private multi-currency cryptographic ledger</p>
+                <div>
+                  <h4 className="text-sm font-black leading-tight">{user.fullName}</h4>
+                  <span className="text-[11px] text-gray-400 font-mono">{user.email}</span>
+                </div>
               </div>
+              <div className="text-right">
+                <span className="text-[10px] uppercase font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                  {user.kycStatus === 'verified_tier2' ? 'Tier 2 Verified' : user.kycStatus}
+                </span>
+                <span className="block text-xs font-mono font-bold mt-1 text-[#00FFB2]">
+                  ${user.balance.toLocaleString()}
+                </span>
+              </div>
+            </div>
 
-              {authError && (
-                <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs font-bold text-center">
-                  {authError}
-                </div>
-              )}
+            {/* Menu Items Grid */}
+            <div className="grid grid-cols-2 gap-2.5 mb-5">
+              {[
+                { id: 'withdraw', label: 'Withdrawal Desk', icon: ArrowUpRight, desc: 'Crypto & Bank wire' },
+                { id: 'kyc', label: 'KYC Vault', icon: ShieldCheck, desc: 'Identity verification' },
+                { id: 'transactions', label: 'Ledger', icon: Layers, desc: 'Audit & tx history' },
+                { id: 'profile', label: 'Account Profile', icon: User, desc: 'Security & settings' },
+              ].map((item) => {
+                const Icon = item.icon;
+                const isActive = activeTab === item.id && !isAdminOpen;
+                return (
+                  <button
+                    key={item.id}
+                    onClick={() => {
+                      setActiveTab(item.id);
+                      setIsAdminOpen(false);
+                      setIsMobileMenuOpen(false);
+                    }}
+                    className={`p-3 rounded-2xl border text-left transition flex flex-col justify-between cursor-pointer ${
+                      isActive
+                        ? 'bg-[#00FFB2]/10 border-[#00FFB2] text-[#00FFB2]'
+                        : theme === 'dark'
+                        ? 'bg-[#0B0E17] border-gray-800 hover:border-gray-700 text-white'
+                        : 'bg-slate-50 border-slate-200 hover:border-slate-300 text-slate-900'
+                    }`}
+                  >
+                    <Icon className="w-5 h-5 mb-2" />
+                    <div>
+                      <span className="text-xs font-bold block">{item.label}</span>
+                      <span className="text-[10px] text-gray-400 block">{item.desc}</span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
 
-              {/* Google Sign-In / Continue with Google Button */}
+            {user.isAdmin && (
               <button
-                type="button"
-                onClick={handleGoogleAuth}
-                className="w-full py-3 rounded-xl bg-white hover:bg-slate-100 dark:bg-gray-900 dark:hover:bg-gray-800 border border-slate-300 dark:border-gray-700 text-slate-800 dark:text-white font-bold text-xs flex items-center justify-center gap-3 transition shadow-sm cursor-pointer"
+                onClick={() => {
+                  setIsAdminOpen(true);
+                  setIsMobileMenuOpen(false);
+                }}
+                className="w-full p-3 mb-4 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-400 flex items-center justify-between font-bold text-xs cursor-pointer hover:bg-rose-500/15"
               >
-                <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
-                  <path
-                    fill="#4285F4"
-                    d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.66-5.17 3.66-9.17z"
-                  />
-                  <path
-                    fill="#34A853"
-                    d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.15C3.26 21.36 7.35 24 12 24z"
-                  />
-                  <path
-                    fill="#FBBC05"
-                    d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.25C.45 8.16 0 9.94 0 12s.45 3.84 1.25 5.42l4.03-3.15z"
-                  />
-                  <path
-                    fill="#EA4335"
-                    d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.35 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98z"
-                  />
-                </svg>
-                <span>Continue with Google</span>
+                <div className="flex items-center gap-2">
+                  <ShieldAlert className="w-4 h-4 text-rose-400" />
+                  <span>Open Administrative Suite</span>
+                </div>
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            )}
+
+            {/* Actions: Theme and Logout */}
+            <div className="pt-3 border-t border-gray-800/80 flex items-center justify-between gap-3">
+              <button
+                onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+                className={`flex-1 py-2.5 px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-2 cursor-pointer ${
+                  theme === 'dark' ? 'bg-[#0B0E17] border-gray-800' : 'bg-slate-100 border-slate-200'
+                }`}
+              >
+                {theme === 'dark' ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4" />}
+                <span>{theme === 'dark' ? 'Light Mode' : 'Dark Mode'}</span>
               </button>
 
-              {/* Or Divider */}
-              <div className="flex items-center gap-3 my-2">
-                <div className="flex-1 h-px bg-slate-200 dark:bg-gray-800" />
-                <span className="text-[10px] uppercase font-bold text-gray-400">or sign in with email</span>
-                <div className="flex-1 h-px bg-slate-200 dark:bg-gray-800" />
-              </div>
-
-              <form onSubmit={handleAuthSubmit} className="space-y-3 text-xs">
-                {authMode === 'register' && (
-                  <div>
-                    <label className="block text-gray-400 font-semibold mb-1">Full Legal Name</label>
-                    <input
-                      type="text"
-                      required
-                      placeholder="e.g. Liam Vance"
-                      value={authName}
-                      onChange={(e) => setAuthName(e.target.value)}
-                      className="w-full bg-gray-950 border border-gray-800 rounded-xl px-4 py-2.5 text-white focus:outline-none focus:border-[#00FFB2]"
-                    />
-                  </div>
-                )}
-
-                <div>
-                  <label className="block text-gray-400 font-semibold mb-1">Email Address</label>
-                  <input
-                    type="email"
-                    required
-                    placeholder="name@domain.com"
-                    value={authEmail}
-                    onChange={(e) => setAuthEmail(e.target.value)}
-                    className="w-full bg-gray-950 border border-gray-800 rounded-xl px-4 py-2.5 text-white focus:outline-none focus:border-[#00FFB2]"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-gray-400 font-semibold mb-1">Password</label>
-                  <input
-                    type="password"
-                    required
-                    placeholder="••••••••"
-                    value={authPassword}
-                    onChange={(e) => setAuthPassword(e.target.value)}
-                    className="w-full bg-gray-950 border border-gray-800 rounded-xl px-4 py-2.5 text-white focus:outline-none focus:border-[#00FFB2]"
-                  />
-                </div>
-
-                <button
-                  type="submit"
-                  className="w-full py-3.5 rounded-xl bg-[#00FFB2] hover:bg-[#00E59E] text-black font-black text-xs uppercase tracking-wider transition shadow-lg shadow-[#00FFB2]/20 cursor-pointer mt-2"
-                >
-                  {authMode === 'login' ? 'Authenticate Session' : 'Create Account'}
-                </button>
-              </form>
-
-              <div className="text-center pt-2">
-                <button
-                  type="button"
-                  onClick={() => setAuthMode(authMode === 'login' ? 'register' : 'login')}
-                  className="text-xs text-[#00FFB2] hover:underline font-bold"
-                >
-                  {authMode === 'login'
-                    ? "Don't have an account? Register here"
-                    : 'Already have an account? Sign in'}
-                </button>
-              </div>
+              <button
+                onClick={handleLogout}
+                className="flex-1 py-2.5 px-3 rounded-xl bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-500 dark:text-red-400 text-xs font-bold flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <LogOut className="w-4 h-4" />
+                <span>Log Out</span>
+              </button>
             </div>
           </div>
         </div>
