@@ -627,14 +627,25 @@ app.post('/api/auth/login', (req, res) => {
   res.json({ token, user });
 });
 
-// Google Sign-In / Continue with Google Endpoint
+// Google Sign-In — receives decoded payload fields from the frontend (after GIS credential decode)
 app.post('/api/auth/google', (req, res) => {
   const { email, fullName, sub, picture, country } = req.body;
   if (!email) return res.status(400).json({ error: 'Google email is required' });
 
-  let user = usersStore.find((u) => u.email.toLowerCase() === email.toLowerCase());
+  // Match by Google sub (most reliable) or by email
+  let user = usersStore.find(
+    (u) => (sub && (u as any).googleSub === sub) || u.email.toLowerCase() === email.toLowerCase()
+  );
 
   if (user) {
+    // Persist the googleSub if not already stored
+    if (sub && !(user as any).googleSub) {
+      (user as any).googleSub = sub;
+    }
+    if (picture && !user.avatarUrl) {
+      user.avatarUrl = picture;
+    }
+
     if (user.status === 'suspended' || user.isBanned) {
       return res.status(403).json({
         error: `Account suspended. Reason: ${user.banReason || 'Administrative compliance review in progress. Please contact support.'}`,
@@ -646,10 +657,8 @@ app.post('/api/auth/google', (req, res) => {
     return res.json({ token, user, isNewUser: false });
   }
 
-  // Create new user with random balance between 3750 and 4967
-  const minBal = 3750;
-  const maxBal = 4967;
-  const randomInitialBalance = Math.floor(Math.random() * (maxBal - minBal + 1)) + minBal;
+  // New Google user — create account with strict Tier 0 / no deposit state
+  const randomInitialBalance = Math.floor(Math.random() * (4967 - 3750 + 1)) + 3750;
   const newUid = `usr_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
 
   user = {
@@ -672,9 +681,11 @@ app.post('/api/auth/google', (req, res) => {
     referralCode: `NEXO-${Math.random().toString(36).substring(2, 7).toUpperCase()}`,
     referralEarnings: 0,
     status: 'active',
-    avatarUrl: picture || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
+    avatarUrl: picture || '',
     createdAt: new Date().toISOString(),
-  };
+  } as any;
+
+  if (sub) (user as any).googleSub = sub;
 
   usersStore.push(user);
 
