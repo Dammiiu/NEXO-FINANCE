@@ -468,13 +468,40 @@ export const App: React.FC = () => {
             )}
           </nav>
 
-          {/* Right Header Controls: Theme Toggle, User Profile OR Sign In */}
-          <div className="flex items-center gap-2 sm:gap-3">
-            {/* Verified Badge (desktop) */}
-            <div className="hidden lg:flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-[10px] font-black uppercase">
+          {/* Right Header Controls: Theme Toggle, User Profile, Admin, Sign Out */}
+          <div className="flex items-center gap-2 sm:gap-2.5">
+            {/* Dynamic KYC Badge (desktop) */}
+            <div
+              className={`hidden lg:flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-black uppercase border ${
+                user.kycTier >= 2
+                  ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-600 dark:text-emerald-400'
+                  : user.kycTier === 1
+                  ? 'bg-blue-500/10 border-blue-500/20 text-blue-600 dark:text-blue-400'
+                  : 'bg-amber-500/10 border-amber-500/20 text-amber-600 dark:text-amber-400'
+              }`}
+            >
               <CheckCircle2 className="w-3 h-3" />
-              <span>Tier 2 Verified</span>
+              <span>
+                {user.kycTier >= 2 ? 'Tier 2 Verified' : user.kycTier === 1 ? 'Tier 1 Verified' : 'Tier 0 Unverified'}
+              </span>
             </div>
+
+            {/* Light / Dark Mode Toggle Button */}
+            <button
+              onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+              className={`p-2 rounded-xl border transition cursor-pointer ${
+                theme === 'dark'
+                  ? 'bg-[#121622] border-gray-800 text-gray-300 hover:text-white hover:border-gray-700'
+                  : 'bg-white border-slate-200 text-slate-700 hover:text-slate-950 hover:border-slate-300 shadow-xs'
+              }`}
+              title={`Switch to ${theme === 'dark' ? 'Light' : 'Dark'} mode`}
+            >
+              {theme === 'dark' ? (
+                <Sun className="w-4 h-4 text-amber-400" />
+              ) : (
+                <Moon className="w-4 h-4 text-slate-700" />
+              )}
+            </button>
 
             {/* User Profile Chip - Displayed when signed in */}
             <button
