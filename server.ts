@@ -3,8 +3,15 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import cors from 'cors';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const getDirname = () => {
+  try {
+    if (typeof import.meta !== 'undefined' && import.meta && import.meta.url) {
+      return path.dirname(fileURLToPath(import.meta.url));
+    }
+  } catch {}
+  return process.cwd();
+};
+const __dirname = getDirname();
 
 const app = express();
 const PORT = 3000;
@@ -1803,14 +1810,19 @@ async function startServer() {
   });
 }
 
-const isServerless = Boolean(
-  process.env.NETLIFY ||
-  process.env.AWS_LAMBDA_FUNCTION_NAME ||
-  process.env.LAMBDA_TASK_ROOT ||
-  process.env.VERCEL
-);
+const isEntrypoint = () => {
+  try {
+    if (process.env.NETLIFY || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.LAMBDA_TASK_ROOT || process.env.VERCEL) {
+      return false;
+    }
+    const entry = process.argv[1] ? path.resolve(process.argv[1]) : '';
+    return entry.includes('server.ts') || entry.includes('server.js');
+  } catch {
+    return false;
+  }
+};
 
-if (!isServerless) {
+if (isEntrypoint()) {
   startServer().catch((err) => {
     console.error('Failed to start server:', err);
   });
