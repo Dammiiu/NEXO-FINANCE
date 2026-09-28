@@ -73,3 +73,15 @@
   }
 }
 
+/* Suppress Netlify Injected Drawer & Badge */
+netlify-drawer,
+#netlify-drawer-container,
+[data-netlify-drawer],
+div[class*="netlify-drawer"] {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+
