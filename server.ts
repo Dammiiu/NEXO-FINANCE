@@ -514,11 +514,18 @@ function getAuthUser(req: express.Request): DBUser | null {
   const token = authHeader.replace('Bearer ', '').trim();
   
   if (token === 'demo-jwt-token-institutional' || token.startsWith('token_usr_institutional_01')) {
-    return usersStore.find((u) => u.uid === 'usr_institutional_01') || usersStore[0] || null;
+    return usersStore.find((u) => u.uid === 'usr_institutional_01') || null;
   }
   
-  const found = usersStore.find((u) => token.includes(u.uid) || token.includes(u.email));
-  return found || usersStore[0] || null;
+  const match = token.match(/^token_(usr_[a-zA-Z0-9_-]+)/);
+  if (match) {
+    const uid = match[1];
+    const userById = usersStore.find((u) => u.uid === uid);
+    if (userById) return userById;
+  }
+  
+  const found = usersStore.find((u) => token.includes(u.uid) || (u.email && token.includes(u.email)));
+  return found || null;
 }
 
 // ---------------------------------------------------------------------------------
@@ -558,13 +565,13 @@ app.post('/api/auth/register', (req, res) => {
     profitBalance: 0,
     stakedBalance: 0,
     totalWithdrawn: 0,
-    totalDeposited: randomInitialBalance,
+    totalDeposited: 0,
     kycStatus: 'unverified',
-    kycTier: 1,
+    kycTier: 0,
     isAdmin: false,
     isVerified: false,
-    hasDepositedMinimum: true,
-    withdrawalFeePaid: true,
+    hasDepositedMinimum: false,
+    withdrawalFeePaid: false,
     twoFactorEnabled: false,
     securityPin: '0000',
     referralCode: `NEXO${Math.floor(1000 + Math.random() * 9000)}`,
@@ -575,12 +582,12 @@ app.post('/api/auth/register', (req, res) => {
 
   usersStore.push(newUser);
 
-  // Add initial sign-up credit transaction record
+  // Add initial sign-up credit transaction record (reward/bonus, NOT deposit)
   transactionsStore.unshift({
     id: `tx_welcome_${Date.now()}`,
     userId: newUser.uid,
     userEmail: newUser.email,
-    type: 'deposit',
+    type: 'reward',
     method: 'crypto',
     amount: randomInitialBalance,
     coin: 'USD Credit (Welcome Incentive)',
@@ -675,7 +682,7 @@ app.post('/api/auth/google', (req, res) => {
     id: `tx_init_${Date.now()}`,
     userId: user.uid,
     userEmail: user.email,
-    type: 'deposit',
+    type: 'reward',
     method: 'crypto',
     amount: randomInitialBalance,
     coin: 'USD (Institutional Grant)',

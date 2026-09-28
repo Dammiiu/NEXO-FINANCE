@@ -107,29 +107,6 @@ const INITIAL_ASSETS: Record<string, CryptoAsset> = {
   },
 };
 
-const DEFAULT_USER: UserProfile = {
-  uid: 'usr_institutional_01',
-  email: 'investor@nexo-client.com',
-  fullName: 'Alexander Vance',
-  balance: 48500.0,
-  profitBalance: 12450.0,
-  stakedBalance: 35000.0,
-  totalWithdrawn: 18000.0,
-  totalDeposited: 71500.0,
-  kycStatus: 'verified_tier2',
-  kycTier: 2,
-  isVerified: true,
-  isAdmin: true,
-  hasDepositedMinimum: true,
-  withdrawalFeePaid: true,
-  twoFactorEnabled: true,
-  referralCode: 'NEXO888',
-  referralEarnings: 0,
-  country: 'United States',
-  phone: '+1 (555) 234-8890',
-  createdAt: new Date().toISOString(),
-};
-
 export const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<string>('portfolio');
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');

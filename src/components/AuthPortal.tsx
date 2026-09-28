@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Lock,
   Mail,
@@ -12,6 +12,10 @@ import {
   Moon,
   CheckCircle2,
   AlertCircle,
+  X,
+  UserCheck,
+  ChevronRight,
+  PlusCircle,
 } from 'lucide-react';
 import { UserProfile } from '../types';
 
@@ -34,6 +38,22 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  // Google OAuth Chooser Modal State
+  const [showGoogleModal, setShowGoogleModal] = useState(false);
+  const [googleSelectedEmail, setGoogleSelectedEmail] = useState('');
+  const [googleCustomEmail, setGoogleCustomEmail] = useState('');
+  const [googleCustomName, setGoogleCustomName] = useState('');
+  const [isUsingCustomGoogle, setIsUsingCustomGoogle] = useState(false);
+  const [recentGoogleEmail, setRecentGoogleEmail] = useState<string | null>(null);
+
+  useEffect(() => {
+    const savedGoogle = localStorage.getItem('nexo_recent_google_email');
+    if (savedGoogle) {
+      setRecentGoogleEmail(savedGoogle);
+      setGoogleSelectedEmail(savedGoogle);
+    }
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -65,6 +85,7 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
       }
 
       // Resilient local session creation if server is cold or offline
+      // STRICT RULES: New accounts are UNVERIFIED (Tier 0) and have NOT deposited minimum
       const localUser: UserProfile = {
         uid: `usr_${Date.now()}`,
         email: userEmail,
@@ -74,12 +95,12 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
         profitBalance: 0,
         stakedBalance: 0,
         totalWithdrawn: 0,
-        totalDeposited: 4250.0,
-        kycStatus: 'verified_tier1',
-        kycTier: 1,
+        totalDeposited: 0,
+        kycStatus: 'unverified',
+        kycTier: 0,
         isAdmin: false,
-        isVerified: true,
-        hasDepositedMinimum: true,
+        isVerified: false,
+        hasDepositedMinimum: false,
         withdrawalFeePaid: false,
         twoFactorEnabled: false,
         referralCode: `NEXO-${Math.random().toString(36).substring(2, 7).toUpperCase()}`,
@@ -99,12 +120,12 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
         profitBalance: 0,
         stakedBalance: 0,
         totalWithdrawn: 0,
-        totalDeposited: 4250.0,
-        kycStatus: 'verified_tier1',
-        kycTier: 1,
+        totalDeposited: 0,
+        kycStatus: 'unverified',
+        kycTier: 0,
         isAdmin: false,
-        isVerified: true,
-        hasDepositedMinimum: true,
+        isVerified: false,
+        hasDepositedMinimum: false,
         withdrawalFeePaid: false,
         twoFactorEnabled: false,
         referralCode: `NEXO-${Math.random().toString(36).substring(2, 7).toUpperCase()}`,
@@ -118,20 +139,24 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
     }
   };
 
-  const handleGoogleAuth = async () => {
-    setErrorMessage(null);
+  // Execute Google Authentication with chosen email and name
+  const executeGoogleAuth = async (targetEmail: string, targetName: string) => {
     setIsLoading(true);
+    setErrorMessage(null);
+    setShowGoogleModal(false);
 
-    const googleEmail = email.trim() || 'investor.global@gmail.com';
-    const googleName = fullName.trim() || 'Google Verified Investor';
+    const cleanEmail = targetEmail.trim();
+    const cleanName = targetName.trim() || cleanEmail.split('@')[0];
+
+    localStorage.setItem('nexo_recent_google_email', cleanEmail);
 
     try {
       const res = await fetch('/api/auth/google', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          email: googleEmail,
-          fullName: googleName,
+          email: cleanEmail,
+          fullName: cleanName,
           picture: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
           country: 'United States',
         }),
@@ -145,22 +170,22 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
         }
       }
 
-      // Seamless fallback: directly activate Google session without errors
+      // Resilient fallback: brand new Google user with STRICT Tier 0 and unverified state
       const fallbackUser: UserProfile = {
         uid: `usr_g_${Date.now()}`,
-        email: googleEmail,
-        fullName: googleName,
+        email: cleanEmail,
+        fullName: cleanName,
         country: 'United States',
-        balance: 4500.0,
+        balance: 4250.0,
         profitBalance: 0,
         stakedBalance: 0,
         totalWithdrawn: 0,
-        totalDeposited: 4500.0,
-        kycStatus: 'verified_tier1',
-        kycTier: 1,
+        totalDeposited: 0,
+        kycStatus: 'unverified',
+        kycTier: 0,
         isAdmin: false,
-        isVerified: true,
-        hasDepositedMinimum: true,
+        isVerified: false,
+        hasDepositedMinimum: false,
         withdrawalFeePaid: false,
         twoFactorEnabled: false,
         referralCode: `NEXO-${Math.random().toString(36).substring(2, 7).toUpperCase()}`,
@@ -171,22 +196,22 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
       const fallbackToken = `token_${fallbackUser.uid}_${Date.now()}`;
       onAuthSuccess(fallbackUser, fallbackToken);
     } catch {
-      // Seamless fallback on network glitch
+      // Offline fallback: brand new Google user
       const fallbackUser: UserProfile = {
         uid: `usr_g_${Date.now()}`,
-        email: googleEmail,
-        fullName: googleName,
+        email: cleanEmail,
+        fullName: cleanName,
         country: 'United States',
-        balance: 4500.0,
+        balance: 4250.0,
         profitBalance: 0,
         stakedBalance: 0,
         totalWithdrawn: 0,
-        totalDeposited: 4500.0,
-        kycStatus: 'verified_tier1',
-        kycTier: 1,
+        totalDeposited: 0,
+        kycStatus: 'unverified',
+        kycTier: 0,
         isAdmin: false,
-        isVerified: true,
-        hasDepositedMinimum: true,
+        isVerified: false,
+        hasDepositedMinimum: false,
         withdrawalFeePaid: false,
         twoFactorEnabled: false,
         referralCode: `NEXO-${Math.random().toString(36).substring(2, 7).toUpperCase()}`,
@@ -199,6 +224,16 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleOpenGoogleModal = () => {
+    // If user already typed an email into the form, default the custom email to that
+    if (email && email.includes('@')) {
+      setGoogleCustomEmail(email);
+      setGoogleCustomName(fullName || email.split('@')[0]);
+      setIsUsingCustomGoogle(true);
+    }
+    setShowGoogleModal(true);
   };
 
   return (
@@ -316,10 +351,10 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
               </div>
             )}
 
-            {/* 1-Click Google Sign-In */}
+            {/* Professional Google Sign-In Button */}
             <button
               type="button"
-              onClick={handleGoogleAuth}
+              onClick={handleOpenGoogleModal}
               disabled={isLoading}
               className={`w-full py-3 px-4 rounded-2xl border font-bold text-xs flex items-center justify-center gap-3 transition shadow-xs cursor-pointer mb-4 ${
                 isDark
@@ -472,7 +507,7 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
         </div>
       </main>
 
-      {/* Footer */}
+      {/* FOOTER */}
       <footer
         className={`border-t py-4 text-center text-xs transition-colors duration-200 ${
           isDark ? 'border-gray-900 text-gray-500' : 'border-slate-200 text-slate-400'
@@ -480,6 +515,181 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
       >
         <span>© {new Date().getFullYear()} Nexo Finance Protocol. Regulated Institutional Custody.</span>
       </footer>
+
+      {/* AUTHENTIC GOOGLE IDENTITY ACCOUNT CHOOSER MODAL */}
+      {showGoogleModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-fade-in">
+          <div
+            className={`w-full max-w-md rounded-3xl p-6 sm:p-7 shadow-2xl border relative overflow-hidden ${
+              isDark ? 'bg-[#151926] border-gray-700 text-white' : 'bg-white border-slate-200 text-slate-900'
+            }`}
+          >
+            {/* Close button */}
+            <button
+              onClick={() => {
+                setShowGoogleModal(false);
+                setIsUsingCustomGoogle(false);
+              }}
+              className="absolute top-5 right-5 p-1.5 rounded-xl text-slate-400 hover:text-slate-700 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-gray-800 transition cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            {/* Google Brand Header */}
+            <div className="flex items-center gap-3 mb-5">
+              <div className="w-10 h-10 rounded-2xl bg-white border border-slate-200 p-2 shadow-xs flex items-center justify-center">
+                <svg className="w-6 h-6" viewBox="0 0 24 24">
+                  <path
+                    fill="#4285F4"
+                    d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.66-5.17 3.66-9.17z"
+                  />
+                  <path
+                    fill="#34A853"
+                    d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.15C3.26 21.36 7.35 24 12 24z"
+                  />
+                  <path
+                    fill="#FBBC05"
+                    d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.25C.45 8.16 0 9.94 0 12s.45 3.84 1.25 5.42l4.03-3.15z"
+                  />
+                  <path
+                    fill="#EA4335"
+                    d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.35 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98z"
+                  />
+                </svg>
+              </div>
+              <div>
+                <h3 className="font-bold text-base">Sign in with Google</h3>
+                <p className="text-xs text-slate-500 dark:text-gray-400">
+                  Choose an account to continue to Nexo Finance
+                </p>
+              </div>
+            </div>
+
+            {/* Account Selection Section */}
+            {!isUsingCustomGoogle ? (
+              <div className="space-y-3 my-4">
+                {recentGoogleEmail && (
+                  <button
+                    type="button"
+                    onClick={() => executeGoogleAuth(recentGoogleEmail, recentGoogleEmail.split('@')[0])}
+                    className={`w-full p-3.5 rounded-2xl border text-left flex items-center justify-between transition cursor-pointer ${
+                      isDark
+                        ? 'bg-gray-900/60 hover:bg-gray-800 border-gray-700'
+                        : 'bg-slate-50 hover:bg-slate-100 border-slate-200'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 rounded-full bg-blue-600 text-white flex items-center justify-center font-bold text-sm uppercase">
+                        {recentGoogleEmail[0]}
+                      </div>
+                      <div>
+                        <div className="text-xs font-bold">{recentGoogleEmail.split('@')[0]}</div>
+                        <div className="text-[11px] text-slate-500 dark:text-gray-400">{recentGoogleEmail}</div>
+                      </div>
+                    </div>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-500">
+                      Device Account
+                    </span>
+                  </button>
+                )}
+
+                {/* Option to use another account / enter email on device */}
+                <button
+                  type="button"
+                  onClick={() => setIsUsingCustomGoogle(true)}
+                  className={`w-full p-3.5 rounded-2xl border border-dashed text-left flex items-center justify-between transition cursor-pointer ${
+                    isDark
+                      ? 'bg-gray-900/30 hover:bg-gray-800/80 border-gray-700 text-gray-300'
+                      : 'bg-slate-50/70 hover:bg-slate-100 border-slate-300 text-slate-700'
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-full bg-slate-200 dark:bg-gray-800 flex items-center justify-center text-slate-500 dark:text-gray-400">
+                      <PlusCircle className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <div className="text-xs font-bold">Use another Google account</div>
+                      <div className="text-[11px] text-slate-500 dark:text-gray-400">
+                        Enter your device Google email
+                      </div>
+                    </div>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-slate-400" />
+                </button>
+              </div>
+            ) : (
+              /* Custom Account Input Form */
+              <div className="space-y-3.5 my-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-gray-300 mb-1">
+                    Google Account Email
+                  </label>
+                  <div className="relative">
+                    <Mail className="w-4 h-4 absolute left-3.5 top-3.5 text-slate-400" />
+                    <input
+                      type="email"
+                      required
+                      autoFocus
+                      placeholder="e.g. yourname@gmail.com"
+                      value={googleCustomEmail}
+                      onChange={(e) => setGoogleCustomEmail(e.target.value)}
+                      className={`w-full pl-10 pr-4 py-2.5 rounded-xl text-xs font-medium focus:outline-none transition border ${
+                        isDark
+                          ? 'bg-[#0B0E17] border-gray-700 text-white focus:border-blue-500'
+                          : 'bg-slate-50 border-slate-300 text-slate-900 focus:border-blue-600'
+                      }`}
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-gray-300 mb-1">
+                    Your Full Name
+                  </label>
+                  <div className="relative">
+                    <UserIcon className="w-4 h-4 absolute left-3.5 top-3.5 text-slate-400" />
+                    <input
+                      type="text"
+                      placeholder="e.g. John Doe"
+                      value={googleCustomName}
+                      onChange={(e) => setGoogleCustomName(e.target.value)}
+                      className={`w-full pl-10 pr-4 py-2.5 rounded-xl text-xs font-medium focus:outline-none transition border ${
+                        isDark
+                          ? 'bg-[#0B0E17] border-gray-700 text-white focus:border-blue-500'
+                          : 'bg-slate-50 border-slate-300 text-slate-900 focus:border-blue-600'
+                      }`}
+                    />
+                  </div>
+                </div>
+
+                <div className="flex gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsUsingCustomGoogle(false)}
+                    className="flex-1 py-2.5 rounded-xl border border-slate-300 dark:border-gray-700 text-xs font-bold text-slate-700 dark:text-gray-300 hover:bg-slate-100 dark:hover:bg-gray-800 transition cursor-pointer"
+                  >
+                    Back
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!googleCustomEmail.trim().includes('@') || isLoading}
+                    onClick={() => executeGoogleAuth(googleCustomEmail, googleCustomName)}
+                    className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-bold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer"
+                  >
+                    {isLoading ? <span>Connecting...</span> : <span>Continue</span>}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Google Terms & Disclosure */}
+            <p className="text-[11px] leading-relaxed text-slate-500 dark:text-gray-400 mt-4 border-t border-slate-200 dark:border-gray-800 pt-3">
+              To continue, Google will share your name, email address, and profile photo with Nexo Finance.
+              Before using this app, review Nexo Finance’s <span className="text-blue-500 underline cursor-pointer">Privacy Policy</span> and <span className="text-blue-500 underline cursor-pointer">Terms of Service</span>.
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
