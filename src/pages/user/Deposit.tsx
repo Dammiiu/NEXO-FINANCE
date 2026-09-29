@@ -978,7 +978,7 @@ export const Deposit: React.FC<DepositProps> = ({
               ) : (
                 <>
                   <Gift className="w-4 h-4" />
-                  <span>Submit {giftCards.length} Giftcard(s) for Approval (${totalGiftCardAmount.toLocaleString()})</span>
+                  <span>Proceed — ${totalGiftCardAmount.toLocaleString()}</span>
                 </>
               )}
             </button>

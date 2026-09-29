@@ -5,8 +5,6 @@ import {
   Sparkles,
   ShieldCheck,
   X,
-  ChevronLeft,
-  ChevronRight,
 } from 'lucide-react';
 import { LiveActivity } from '../types';
 import {
@@ -38,8 +36,8 @@ export const HeaderLiveActivityTicker: React.FC<HeaderLiveActivityTickerProps> =
   const [showToast, setShowToast] = useState<boolean>(true);
   const toastTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Fast & smooth 3.2-second transition cycle across all 250+ transactions
-  const ROTATION_INTERVAL_MS = 3200;
+  // Smooth 8–15 second transition cycle across all transactions
+  const ROTATION_INTERVAL_MS = 8000 + Math.floor(Math.random() * 7000);
 
   // Seamless, glitch-free automatic carousel rotation across the 250+ transactions
   useEffect(() => {
@@ -101,15 +99,8 @@ export const HeaderLiveActivityTicker: React.FC<HeaderLiveActivityTickerProps> =
 
   const currentActivity = activities[currentIndex % activities.length] || activities[0];
 
-  const handlePrev = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    setCurrentIndex((prev) => (prev - 1 + activities.length) % activities.length);
-  };
 
-  const handleNext = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    setCurrentIndex((prev) => (prev + 1) % activities.length);
-  };
+
 
   return (
     <>
@@ -120,16 +111,8 @@ export const HeaderLiveActivityTicker: React.FC<HeaderLiveActivityTickerProps> =
         onMouseLeave={() => setIsPaused(false)}
         className="w-full border-b transition-colors relative z-30 select-none overflow-hidden bg-slate-50 dark:bg-[#06080F] border-slate-200 dark:border-gray-800 text-slate-900 dark:text-white shadow-xs"
       >
-        {/* Animated Cycle Progress Line */}
-        {!isPaused && (
-          <div
-            key={`progress-${currentIndex}`}
-            className="absolute top-0 left-0 h-[2.5px] bg-gradient-to-r from-emerald-500 via-[#00FFB2] to-cyan-500 transition-all w-full opacity-85"
-            style={{
-              animation: `progressTimer ${ROTATION_INTERVAL_MS}ms linear infinite`,
-            }}
-          />
-        )}
+
+
 
         <div className="max-w-7xl mx-auto px-3 sm:px-6 py-2 flex items-center justify-between gap-2 sm:gap-3">
           {/* Left: Live Multi-Sig Node Indicator Pill */}
@@ -138,11 +121,8 @@ export const HeaderLiveActivityTicker: React.FC<HeaderLiveActivityTickerProps> =
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#00FFB2] opacity-75"></span>
               <span className="relative inline-flex rounded-full h-2 w-2 bg-[#00FFB2]"></span>
             </span>
-            <span className="uppercase text-[10px] font-mono font-black hidden xs:inline">
-              LIVE ON-CHAIN
-            </span>
-            <span className="text-[10px] font-mono font-black text-slate-500 dark:text-gray-400">
-              ({activities.length}+)
+            <span className="uppercase text-[10px] font-mono font-black">
+              Live Transactions
             </span>
           </div>
 
@@ -234,26 +214,8 @@ export const HeaderLiveActivityTicker: React.FC<HeaderLiveActivityTickerProps> =
             </div>
           )}
 
-          {/* Right: Navigation Controls & Verification Badge */}
-          <div className="flex items-center gap-1 shrink-0">
-            <button
-              onClick={handlePrev}
-              title="Previous Live Notification"
-              className="p-1 rounded-lg hover:bg-slate-200 dark:hover:bg-gray-800 text-slate-600 dark:text-gray-400 transition cursor-pointer"
-            >
-              <ChevronLeft className="w-4 h-4" />
-            </button>
-            <span className="text-[10px] font-mono font-bold text-slate-500 dark:text-gray-400 hidden xl:inline">
-              #{currentIndex + 1}/{activities.length}
-            </span>
-            <button
-              onClick={handleNext}
-              title="Next Live Notification"
-              className="p-1 rounded-lg hover:bg-slate-200 dark:hover:bg-gray-800 text-slate-600 dark:text-gray-400 transition cursor-pointer"
-            >
-              <ChevronRight className="w-4 h-4" />
-            </button>
-          </div>
+
+
         </div>
       </div>
 
