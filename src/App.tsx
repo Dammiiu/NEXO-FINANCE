@@ -140,6 +140,12 @@ export const App: React.FC = () => {
   const [authError, setAuthError] = useState<string | null>(null);
  
   // Fetch initial profile and transactions
+  const handleRefreshData = () => {
+    fetchUserData();
+    fetchTransactions();
+    fetchGlobalSettings();
+  };
+
   const fetchUserData = async () => {
     if (!authToken) return;
     try {
@@ -159,7 +165,7 @@ export const App: React.FC = () => {
   const fetchTransactions = async () => {
     if (!authToken) return;
     try {
-      const res = await fetch('/api/transactions/history', {
+      const res = await fetch('/api/transactions', {
         headers: { Authorization: `Bearer ${authToken}` },
       });
       if (res.ok) {
@@ -591,7 +597,7 @@ export const App: React.FC = () => {
                 cryptoPrices={cryptoPriceList}
                 authToken={authToken}
                 theme={theme}
-                onRefreshUser={fetchUserData}
+                onRefreshUser={handleRefreshData}
               />
             )}
 
@@ -600,7 +606,7 @@ export const App: React.FC = () => {
                 user={user}
                 authToken={authToken}
                 theme={theme}
-                onRefreshUser={fetchUserData}
+                onRefreshUser={handleRefreshData}
               />
             )}
 
@@ -609,7 +615,7 @@ export const App: React.FC = () => {
                 user={user}
                 authToken={authToken}
                 theme={theme}
-                onRefreshUser={fetchUserData}
+                onRefreshUser={handleRefreshData}
               />
             )}
 
@@ -618,7 +624,8 @@ export const App: React.FC = () => {
                 user={user}
                 authToken={authToken}
                 theme={theme}
-                onRefreshUser={fetchUserData}
+                onRefreshUser={handleRefreshData}
+                onNavigateDeposit={() => setActiveTab('deposit')}
               />
             )}
 
@@ -627,7 +634,7 @@ export const App: React.FC = () => {
                 user={user}
                 authToken={authToken}
                 theme={theme}
-                onRefreshUser={fetchUserData}
+                onRefreshUser={handleRefreshData}
               />
             )}
 
@@ -643,7 +650,7 @@ export const App: React.FC = () => {
                 user={user}
                 authToken={authToken}
                 theme={theme}
-                onRefreshUser={fetchUserData}
+                onRefreshUser={handleRefreshData}
                 onLogout={handleLogout}
               />
             )}
