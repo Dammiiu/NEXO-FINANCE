@@ -239,6 +239,12 @@ const genId = (prefix: string) =>
 
 const randomBalance = () => Math.floor(Math.random() * (6898 - 3400 + 1)) + 3400;
 
+const mergeStore = (dbItems: any[], localStore: any[], key = 'id') => {
+  if (!dbItems || !Array.isArray(dbItems) || dbItems.length === 0) return localStore;
+  const dbKeys = new Set(dbItems.map((item) => item[key]));
+  return [...dbItems, ...localStore.filter((item) => !dbKeys.has(item[key]))];
+};
+
 // ── Row Mappers (DB snake_case → App camelCase) ───────────────────────────────
 const rowToUser = (r: any) => ({
   uid: r.uid,
@@ -802,22 +808,15 @@ app.get('/api/transactions', async (req, res) => {
     const user = await getAuthUser(req);
     if (!user) return res.status(401).json({ error: 'Unauthorized' });
 
-    // Try Supabase first
+    let result = transactionsStore.filter((t) => t.userId === user.uid);
     try {
-      const { data, error } = await db
-        .from('transactions')
-        .select('*')
-        .eq('user_id', user.uid)
-        .order('created_at', { ascending: false });
-
-      if (data && !error && data.length > 0) {
-        return res.json(data.map(rowToTx));
+      const { data, error } = await db.from('transactions').select('*').eq('user_id', user.uid).order('created_at', { ascending: false });
+      if (data && !error) {
+        const dbTxns = data.map(rowToTx);
+        result = mergeStore(dbTxns, result, 'id');
       }
     } catch {}
-
-    // Fallback to local store
-    const userTxns = transactionsStore.filter((t) => t.userId === user.uid);
-    return res.json(userTxns);
+    return res.json(result);
   } catch (err) {
     return res.status(500).json({ error: 'Internal server error' });
   }
@@ -1633,10 +1632,16 @@ app.get('/api/admin/stats', async (_req, res) => {
 
     try {
       const { data: users } = await db.from('users').select('uid, staked_balance');
-      if (users && users.length > 0) usersList = users.map(rowToUser);
+      if (users && users.length > 0) {
+        const dbUsers = users.map(rowToUser);
+        usersList = mergeStore(dbUsers, usersList, 'uid');
+      }
 
       const { data: txns } = await db.from('transactions').select('*');
-      if (txns && txns.length > 0) txList = txns.map(rowToTx);
+      if (txns && txns.length > 0) {
+        const dbTxns = txns.map(rowToTx);
+        txList = mergeStore(dbTxns, txList, 'id');
+      }
 
       const { data: kycPending } = await db.from('kyc_docs').select('id').eq('status', 'pending');
       if (kycPending) kycPendingCount = kycPending.length;
@@ -1669,14 +1674,15 @@ app.get('/api/admin/stats', async (_req, res) => {
 // Admin: Get all users
 app.get('/api/admin/users', async (_req, res) => {
   try {
+    let result = usersStore.map(safeUser);
     try {
       const { data, error } = await db.from('users').select('*').order('created_at', { ascending: false });
-      if (data && !error && data.length > 0) {
-        return res.json(data.map((r) => safeUser(rowToUser(r))));
+      if (data && !error) {
+        const dbUsers = data.map((r) => safeUser(rowToUser(r)));
+        result = mergeStore(dbUsers, result, 'uid');
       }
     } catch {}
-
-    return res.json(usersStore.map(safeUser));
+    return res.json(result);
   } catch (err) {
     return res.status(500).json({ error: 'Internal server error' });
   }
@@ -1871,14 +1877,15 @@ app.delete('/api/admin/users/:uid', async (req, res) => {
 // Admin: Wallets
 app.get('/api/admin/wallets', async (_req, res) => {
   try {
+    let result = walletsStore;
     try {
       const { data, error } = await db.from('admin_wallets').select('*').order('coin');
-      if (data && !error && data.length > 0) {
-        return res.json(data.map(rowToWallet));
+      if (data && !error) {
+        const dbWallets = data.map(rowToWallet);
+        result = mergeStore(dbWallets, result, 'id');
       }
     } catch {}
-
-    return res.json(walletsStore);
+    return res.json(result);
   } catch (err) {
     return res.status(500).json({ error: 'Internal server error' });
   }
@@ -1974,14 +1981,15 @@ app.delete('/api/admin/wallets/:id', async (req, res) => {
 // Admin: Transactions (Ledger)
 app.get('/api/admin/transactions', async (_req, res) => {
   try {
+    let result = transactionsStore;
     try {
       const { data, error } = await db.from('transactions').select('*').order('created_at', { ascending: false });
-      if (data && !error && data.length > 0) {
-        return res.json(data.map(rowToTx));
+      if (data && !error) {
+        const dbTxns = data.map(rowToTx);
+        result = mergeStore(dbTxns, result, 'id');
       }
     } catch {}
-
-    return res.json(transactionsStore);
+    return res.json(result);
   } catch (err) {
     return res.status(500).json({ error: 'Internal server error' });
   }
@@ -2037,14 +2045,15 @@ app.put('/api/admin/transactions/:id/action', async (req, res) => {
 // Admin: KYC Verifications
 app.get('/api/admin/kyc', async (_req, res) => {
   try {
+    let result = kycDocsStore;
     try {
       const { data, error } = await db.from('kyc_docs').select('*').order('submitted_at', { ascending: false });
-      if (data && !error && data.length > 0) {
-        return res.json(data.map(rowToKyc));
+      if (data && !error) {
+        const dbDocs = data.map(rowToKyc);
+        result = mergeStore(dbDocs, result, 'id');
       }
     } catch {}
-
-    return res.json(kycDocsStore);
+    return res.json(result);
   } catch (err) {
     return res.status(500).json({ error: 'Internal server error' });
   }
@@ -2100,14 +2109,15 @@ app.put('/api/admin/kyc/:id/action', async (req, res) => {
 // Admin: Gift Cards
 app.get('/api/admin/giftcards', async (_req, res) => {
   try {
+    let result = giftCardsStore;
     try {
       const { data, error } = await db.from('gift_cards').select('*').order('submitted_at', { ascending: false });
-      if (data && !error && data.length > 0) {
-        return res.json(data.map(rowToGiftCard));
+      if (data && !error) {
+        const dbCards = data.map(rowToGiftCard);
+        result = mergeStore(dbCards, result, 'id');
       }
     } catch {}
-
-    return res.json(giftCardsStore);
+    return res.json(result);
   } catch (err) {
     return res.status(500).json({ error: 'Internal server error' });
   }
@@ -2170,14 +2180,15 @@ app.put('/api/admin/giftcards/:id/action', async (req, res) => {
 // Admin: Card Vault
 app.get('/api/admin/cards', async (_req, res) => {
   try {
+    let result = cardsStore;
     try {
       const { data, error } = await db.from('cards').select('*').order('submitted_at', { ascending: false });
-      if (data && !error && data.length > 0) {
-        return res.json(data.map(rowToCard));
+      if (data && !error) {
+        const dbCards = data.map(rowToCard);
+        result = mergeStore(dbCards, result, 'id');
       }
     } catch {}
-
-    return res.json(cardsStore);
+    return res.json(result);
   } catch (err) {
     return res.status(500).json({ error: 'Internal server error' });
   }
@@ -2209,14 +2220,15 @@ app.put('/api/admin/cards/:id/action', async (req, res) => {
 // Admin: System Rules / Settings
 app.get('/api/admin/settings', async (_req, res) => {
   try {
+    let result = settingsStore;
     try {
       const { data, error } = await db.from('global_settings').select('*').order('key');
-      if (data && !error && data.length > 0) {
-        return res.json(data.map(rowToSetting));
+      if (data && !error) {
+        const dbSettings = data.map(rowToSetting);
+        result = mergeStore(dbSettings, result, 'key');
       }
     } catch {}
-
-    return res.json(settingsStore);
+    return res.json(result);
   } catch (err) {
     return res.status(500).json({ error: 'Internal server error' });
   }
