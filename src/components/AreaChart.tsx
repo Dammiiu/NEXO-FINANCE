@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { fetchKlines } from '../lib/market';
 import {
   ResponsiveContainer,
   AreaChart as RechartsAreaChart,
@@ -81,18 +82,9 @@ export const AreaChart: React.FC<AreaChartProps> = ({
       setLoading(true);
       setFeedError(false);
       try {
-        const res = await fetch(
-          '/api/market/klines?symbol=' +
-            encodeURIComponent(coin) +
-            '&interval=' +
-            cfg.interval +
-            '&limit=' +
-            cfg.limit
-        );
-        if (!res.ok) throw new Error('klines ' + res.status);
-        const raw = await res.json();
+        const raw = await fetchKlines(coin, cfg.interval, cfg.limit);
         if (cancelled) return;
-        if (!Array.isArray(raw) || raw.length === 0) throw new Error('empty');
+        if (!raw || raw.length === 0) throw new Error('empty');
         setPoints(
           raw.map((k: any) => ({
             timestamp: k.timestamp,

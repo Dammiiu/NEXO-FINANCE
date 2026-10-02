@@ -43,6 +43,7 @@ import { Trade } from './pages/user/Trade';
 import { Deposit } from './pages/user/Deposit';
 import { Withdraw } from './pages/user/Withdraw';
 import { CryptoAsset, UserProfile, Transaction } from './types';
+import { fetchTickers, fetchSparkline } from './lib/market';
 
 const INITIAL_ASSETS: Record<string, CryptoAsset> = {
   BTC: { symbol: 'BTC', name: 'Bitcoin', price: 84400, change24h: -0.46, high24h: 87220, low24h: 83888, volume24h: 2229330499, sparkline: [84400] },
@@ -159,10 +160,8 @@ export const App: React.FC = () => {
   useEffect(() => {
     const loadTickers = async () => {
       try {
-        const res = await fetch("/api/market/tickers");
-        if (!res.ok) return;
-        const rows = await res.json();
-        if (!Array.isArray(rows) || rows.length === 0) return;
+        const rows = await fetchTickers();
+        if (!rows || rows.length === 0) return;
 
         setPrices((prev) => {
           const next: Record<string, CryptoAsset> = { ...prev };
@@ -201,13 +200,8 @@ export const App: React.FC = () => {
       await Promise.all(
         coins.map(async (coin) => {
           try {
-            const res = await fetch(
-              "/api/market/klines?symbol=" + coin + "&interval=4h&limit=42"
-            );
-            if (!res.ok) return;
-            const rows = await res.json();
-            if (!Array.isArray(rows) || rows.length === 0) return;
-            const series = rows.map((k: any) => k.price);
+            const series = await fetchSparkline(coin);
+            if (series.length === 0) return;
             setPrices((prev) =>
               prev[coin] ? { ...prev, [coin]: { ...prev[coin], sparkline: series } } : prev
             );
