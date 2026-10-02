@@ -2424,6 +2424,153 @@ app.post('/api/admin/seed', requireAdmin, async (_req, res) => {
 // SERVER ENTRYPOINT
 // =============================================================================
 
+// ─────────────────────────────────────────────────────────────────────────────
+// MARKET DATA
+// Real prices proxied server-side so the browser never hits provider rate limits
+// and CORS is a non-issue. Binance is primary, CoinGecko is the fallback.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const MARKET_SYMBOLS: Record<string, string> = {
+  BTC: 'bitcoin',
+  ETH: 'ethereum',
+  SOL: 'solana',
+  BNB: 'binancecoin',
+  XRP: 'ripple',
+  USDT: 'tether',
+};
+
+const marketCache = new Map<string, { at: number; data: any }>();
+
+const cacheGet = (key: string, ttlMs: number) => {
+  const hit = marketCache.get(key);
+  if (hit && Date.now() - hit.at < ttlMs) return hit.data;
+  return null;
+};
+const cacheSet = (key: string, data: any) => {
+  marketCache.set(key, { at: Date.now(), data });
+  return data;
+};
+
+const fetchJson = async (url: string, timeoutMs = 8000): Promise<any | null> => {
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    const res = await fetch(url, {
+      signal: ctrl.signal,
+      headers: { Accept: 'application/json', 'User-Agent': 'NexoFinance/1.0' },
+    });
+    clearTimeout(timer);
+    if (!res.ok) {
+      console.error('[market] non-OK', res.status, url);
+      return null;
+    }
+    return await res.json();
+  } catch (e: any) {
+    console.error('[market] fetch failed', url, e && e.message);
+    return null;
+  }
+};
+
+const round = (n: number, dp: number) => Number(Number(n).toFixed(dp));
+
+// Live 24h stats for every supported asset.
+app.get('/api/market/tickers', async (_req, res) => {
+  const cached = cacheGet('tickers', 3000);
+  if (cached) return res.json(cached);
+
+  // USDT/USDT is not a tradable Binance pair, so it is pinned separately below.
+  const pairs = Object.keys(MARKET_SYMBOLS).filter((s) => s !== 'USDT').map((s) => s + 'USDT');
+  const binance = await fetchJson(
+    'https://api.binance.com/api/v3/ticker/24hr?symbols=' + encodeURIComponent(JSON.stringify(pairs))
+  );
+
+  let out: any[] | null = null;
+
+  if (Array.isArray(binance)) {
+    out = binance.map((t: any) => {
+      const coin = String(t.symbol).replace('USDT', '');
+      const decimals = coin === 'BTC' || coin === 'ETH' || coin === 'BNB' ? 2 : 4;
+      return {
+        symbol: coin,
+        name: String(coin === 'USDT' ? 'Tether USD' : coin),
+        price: round(parseFloat(t.lastPrice), decimals),
+        change24h: round(parseFloat(t.priceChangePercent), 2),
+        high24h: round(parseFloat(t.highPrice), decimals),
+        low24h: round(parseFloat(t.lowPrice), decimals),
+        volume24h: round(parseFloat(t.quoteVolume), 0),
+        source: 'binance',
+      };
+    });
+  }
+
+  // Stablecoin peg: USDT trades at ~$1 and has no USDT/USD pair.
+  if (out && !out.some((r: any) => r.symbol === 'USDT')) {
+    out.push({ symbol: 'USDT', name: 'Tether USD', price: 1, change24h: 0, high24h: 1, low24h: 1, volume24h: 0, source: 'peg' });
+  }
+
+  if (!out) {
+    // Fallback provider
+    const ids = Object.values(MARKET_SYMBOLS).join(',');
+    const cg = await fetchJson(
+      'https://api.coingecko.com/api/v3/simple/price?ids=' + ids +
+      '&vs_currencies=usd&include_24hr_change=true&include_24hr_vol=true'
+    );
+    if (cg) {
+      out = Object.keys(MARKET_SYMBOLS).map((coin) => {
+        const row = cg[MARKET_SYMBOLS[coin]];
+        if (!row) return null;
+        const decimals = coin === 'BTC' || coin === 'ETH' || coin === 'BNB' ? 2 : 4;
+        const usd = row.usd ?? 0;
+        return {
+          symbol: coin,
+          name: coin === 'USDT' ? 'Tether USD' : coin,
+          price: round(usd, decimals),
+          change24h: round(row.usd_24h_change ?? 0, 2),
+          high24h: round(usd, decimals),
+          low24h: round(usd, decimals),
+          volume24h: round(row.usd_24h_vol ?? 0, 0),
+          source: 'coingecko',
+        };
+      }).filter(Boolean);
+    }
+  }
+
+  if (!out || out.length === 0) {
+    return res.status(503).json({ error: 'Market data provider unavailable' });
+  }
+  return res.json(cacheSet('tickers', out));
+});
+
+// Real OHLC history used by the charts.
+app.get('/api/market/klines', async (req, res) => {
+  const coin = String(req.query.symbol || 'BTC').toUpperCase().replace('USDT', '');
+  const interval = String(req.query.interval || '1h');
+  const limit = Math.min(500, Math.max(10, parseInt(String(req.query.limit || '168'), 10) || 168));
+
+  const key = 'klines:' + coin + ':' + interval + ':' + limit;
+  const cached = cacheGet(key, 45000);
+  if (cached) return res.json(cached);
+
+  const raw = await fetchJson(
+    'https://api.binance.com/api/v3/klines?symbol=' + coin + 'USDT&interval=' + interval + '&limit=' + limit
+  );
+
+  if (!Array.isArray(raw)) {
+    return res.status(503).json({ error: 'Chart data provider unavailable' });
+  }
+
+  const points = raw.map((k: any[]) => ({
+    timestamp: k[0],
+    price: round(parseFloat(k[4]), 6),
+    open: round(parseFloat(k[1]), 6),
+    high: round(parseFloat(k[2]), 6),
+    low: round(parseFloat(k[3]), 6),
+    volume: round(parseFloat(k[5]), 4),
+  }));
+
+  return res.json(cacheSet(key, points));
+});
+
 const isEntrypoint = () => {
   try {
     if (process.env.NETLIFY || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.LAMBDA_TASK_ROOT || process.env.VERCEL) {

@@ -45,67 +45,14 @@ import { Withdraw } from './pages/user/Withdraw';
 import { CryptoAsset, UserProfile, Transaction } from './types';
 
 const INITIAL_ASSETS: Record<string, CryptoAsset> = {
-  BTC: {
-    symbol: 'BTC',
-    name: 'Bitcoin',
-    price: 96420.5,
-    change24h: 3.45,
-    high24h: 98100,
-    low24h: 94200,
-    volume24h: 42000000000,
-    sparkline: [94200, 94800, 95300, 95100, 95800, 96100, 96420.5],
-  },
-  ETH: {
-    symbol: 'ETH',
-    name: 'Ethereum',
-    price: 2840.2,
-    change24h: 1.82,
-    high24h: 2910,
-    low24h: 2780,
-    volume24h: 18120000000,
-    sparkline: [2780, 2800, 2820, 2810, 2835, 2840.2],
-  },
-  SOL: {
-    symbol: 'SOL',
-    name: 'Solana',
-    price: 198.75,
-    change24h: 6.42,
-    high24h: 204,
-    low24h: 188.5,
-    volume24h: 5105400200,
-    sparkline: [188.5, 192, 195, 194, 197.5, 198.75],
-  },
-  BNB: {
-    symbol: 'BNB',
-    name: 'BNB Chain',
-    price: 645.1,
-    change24h: 0.88,
-    high24h: 655,
-    low24h: 638,
-    volume24h: 1804005000,
-    sparkline: [638, 640, 642, 644, 643, 645.1],
-  },
-  XRP: {
-    symbol: 'XRP',
-    name: 'Ripple',
-    price: 2.45,
-    change24h: 8.2,
-    high24h: 2.6,
-    low24h: 2.25,
-    volume24h: 4890021000,
-    sparkline: [2.25, 2.3, 2.38, 2.4, 2.45],
-  },
-  USDT: {
-    symbol: 'USDT',
-    name: 'Tether USD',
-    price: 1.0,
-    change24h: 0.01,
-    high24h: 1.01,
-    low24h: 0.99,
-    volume24h: 54100900000,
-    sparkline: [1, 1, 0.99, 1, 1, 1],
-  },
+  BTC: { symbol: 'BTC', name: 'Bitcoin', price: 84400, change24h: -0.46, high24h: 87220, low24h: 83888, volume24h: 2229330499, sparkline: [84400] },
+  ETH: { symbol: 'ETH', name: 'Ethereum', price: 2667.15, change24h: -1.29, high24h: 2777.33, low24h: 2650.88, volume24h: 1145200967, sparkline: [2667.15] },
+  SOL: { symbol: 'SOL', name: 'Solana', price: 118.05, change24h: -0.22, high24h: 123.76, low24h: 117.11, volume24h: 387584204, sparkline: [118.05] },
+  BNB: { symbol: 'BNB', name: 'BNB Chain', price: 766.04, change24h: -0.52, high24h: 784.46, low24h: 760.35, volume24h: 110657072, sparkline: [766.04] },
+  XRP: { symbol: 'XRP', name: 'Ripple', price: 1.4742, change24h: -2, high24h: 1.555, low24h: 1.4458, volume24h: 305571658, sparkline: [1.4742] },
+  USDT: { symbol: 'USDT', name: 'Tether USD', price: 1, change24h: 0, high24h: 1, low24h: 1, volume24h: 0, sparkline: [1] },
 };
+
 
 export const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<string>('portfolio');
@@ -207,67 +154,73 @@ export const App: React.FC = () => {
     }
   }, [authToken]);
 
-  // Live Binance WebSocket / Polling Stream
+  // Live market prices, proxied through our API (Binance primary, CoinGecko fallback).
+  // If a poll fails we simply keep the last known good prices - we never invent them.
   useEffect(() => {
-    const fetchPrices = async () => {
+    const loadTickers = async () => {
       try {
-        const res = await fetch('https://api.binance.com/api/v3/ticker/24hr');
+        const res = await fetch("/api/market/tickers");
         if (!res.ok) return;
-        const data = await res.json();
-        if (Array.isArray(data)) {
-          setPrices((prev) => {
-            const updated = { ...prev };
-            for (const item of data) {
-              if (item.symbol.endsWith('USDT')) {
-                const coin = item.symbol.replace('USDT', '');
-                if (updated[coin]) {
-                  const price = parseFloat(item.lastPrice);
-                  const change24h = parseFloat(item.priceChangePercent);
-                  const high24h = parseFloat(item.highPrice);
-                  const low24h = parseFloat(item.lowPrice);
-                  const volume24h = parseFloat(item.volume);
+        const rows = await res.json();
+        if (!Array.isArray(rows) || rows.length === 0) return;
 
-                  const spark = [...updated[coin].sparkline, price];
-                  if (spark.length > 10) spark.shift();
-
-                  updated[coin] = {
-                    ...updated[coin],
-                    price: Number(price.toFixed(coin === 'BTC' || coin === 'ETH' || coin === 'BNB' ? 2 : 4)),
-                    change24h: Number(change24h.toFixed(2)),
-                    high24h,
-                    low24h,
-                    volume24h,
-                    sparkline: spark,
-                  };
-                }
-              }
-            }
-            return updated;
-          });
-        }
-      } catch {
-        // Fallback smoothing
         setPrices((prev) => {
-          const updated = { ...prev };
-          Object.keys(updated).forEach((sym) => {
-            const delta = (Math.random() - 0.49) * 0.002;
-            const newPrice = updated[sym].price * (1 + delta);
-            const spark = [...updated[sym].sparkline, newPrice];
-            if (spark.length > 10) spark.shift();
-            updated[sym] = {
-              ...updated[sym],
-              price: Number(newPrice.toFixed(sym === 'BTC' || sym === 'ETH' ? 2 : 4)),
-              sparkline: spark,
+          const next: Record<string, CryptoAsset> = { ...prev };
+          rows.forEach((r: any) => {
+            const cur = next[r.symbol];
+            if (!cur) return;
+            const spark = [...cur.sparkline, r.price].slice(-24);
+            next[r.symbol] = {
+              ...cur,
+              name: r.name && r.name !== r.symbol ? r.name : cur.name,
+              price: r.price,
+              change24h: r.change24h,
+              high24h: r.high24h,
+              low24h: r.low24h,
+              volume24h: r.volume24h,
+              sparkline: spark.length > 1 ? spark : cur.sparkline,
             };
           });
-          return updated;
+          return next;
         });
+      } catch {
+        // Keep the previous values rather than showing fabricated numbers.
       }
     };
 
-    fetchPrices();
-    const interval = setInterval(fetchPrices, 3500);
-    return () => clearInterval(interval);
+    loadTickers();
+    const timer = setInterval(loadTickers, 5000);
+    return () => clearInterval(timer);
+  }, []);
+
+  // Real 7-day history for the table sparklines (42 x 4h candles).
+  useEffect(() => {
+    const coins = ["BTC", "ETH", "SOL", "BNB", "XRP", "USDT"];
+
+    const loadSparklines = async () => {
+      await Promise.all(
+        coins.map(async (coin) => {
+          try {
+            const res = await fetch(
+              "/api/market/klines?symbol=" + coin + "&interval=4h&limit=42"
+            );
+            if (!res.ok) return;
+            const rows = await res.json();
+            if (!Array.isArray(rows) || rows.length === 0) return;
+            const series = rows.map((k: any) => k.price);
+            setPrices((prev) =>
+              prev[coin] ? { ...prev, [coin]: { ...prev[coin], sparkline: series } } : prev
+            );
+          } catch {
+            // ignore
+          }
+        })
+      );
+    };
+
+    loadSparklines();
+    const timer = setInterval(loadSparklines, 600000);
+    return () => clearInterval(timer);
   }, []);
 
   const handleGoogleAuth = async () => {
@@ -300,6 +253,7 @@ export const App: React.FC = () => {
         setAuthToken(data.token);
         localStorage.setItem('nexo_user', JSON.stringify(data.user));
         localStorage.setItem('nexo_authToken', data.token);
+        sessionStorage.removeItem('nexo_session_recovered');
         setShowAuthModal(false);
         fetchUserData();
         fetchTransactions();
@@ -332,6 +286,7 @@ export const App: React.FC = () => {
         setAuthToken(data.token);
         localStorage.setItem('nexo_user', JSON.stringify(data.user));
         localStorage.setItem('nexo_authToken', data.token);
+        sessionStorage.removeItem('nexo_session_recovered');
         setShowAuthModal(false);
         fetchUserData();
         fetchTransactions();
@@ -357,6 +312,7 @@ export const App: React.FC = () => {
     setAuthToken(token);
     localStorage.setItem('nexo_user', JSON.stringify(authUser));
     localStorage.setItem('nexo_authToken', token);
+    sessionStorage.removeItem('nexo_session_recovered');
   };
 
   if (!authToken || !user) {

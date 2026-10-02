@@ -105,7 +105,7 @@ export const Deposit: React.FC<DepositProps> = ({
   useEffect(() => {
     const fetchWallets = async () => {
       try {
-        const res = await fetch('/api/transactions/deposit-addresses');
+        const res = await fetch('/api/deposit/wallets');
         if (res.ok) {
           const data = await res.json();
           if (data && data.length > 0) {
