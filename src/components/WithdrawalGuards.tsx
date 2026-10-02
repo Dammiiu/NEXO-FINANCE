@@ -1,9 +1,7 @@
 import React, { useState } from 'react';
 import {
   ShieldCheck,
-  Lock,
   AlertTriangle,
-  KeyRound,
   CheckCircle2,
   X,
   ShieldAlert,
@@ -35,9 +33,6 @@ export const WithdrawalGuards: React.FC<WithdrawalGuardsProps> = ({
   onCancel,
   onNavigateDeposit,
 }) => {
-  const [pin, setPin] = useState('');
-  const [otp, setOtp] = useState('');
-  const [otpSent, setOtpSent] = useState(false);
   const [isVerifying, setIsVerifying] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -51,23 +46,8 @@ export const WithdrawalGuards: React.FC<WithdrawalGuardsProps> = ({
   const dailyLimit = user.kycTier === 3 ? 1000000 : user.kycTier === 2 ? 100000 : user.kycTier === 1 ? 10000 : 2000;
   const isOverLimit = amount > dailyLimit;
 
-  const handleSendOtp = () => {
-    setOtpSent(true);
-    setError(null);
-  };
-
   const handleConfirmWithdrawal = () => {
     setError(null);
-
-    if (pin.length < 4) {
-      setError('Please enter your 4-digit security PIN.');
-      return;
-    }
-
-    if (user.twoFactorEnabled && !otp) {
-      setError('Please enter your 6-digit Authenticator code.');
-      return;
-    }
 
     setIsVerifying(true);
 
@@ -245,60 +225,13 @@ export const WithdrawalGuards: React.FC<WithdrawalGuardsProps> = ({
             )}
           </div>
 
-          {/* PIN & 2FA Input */}
-          <div className="space-y-3 pt-2">
-            <div>
-              <label className="block text-slate-500 dark:text-gray-400 text-xs font-bold mb-1 flex items-center gap-1">
-                <Lock className="w-3.5 h-3.5 text-emerald-600 dark:text-[#00FFB2]" />
-                <span>4-Digit Security PIN</span>
-              </label>
-              <input
-                type="password"
-                maxLength={4}
-                placeholder="••••"
-                value={pin}
-                onChange={(e) => setPin(e.target.value)}
-                className="w-full bg-slate-100 dark:bg-gray-950 border border-slate-200 dark:border-gray-800 rounded-xl px-4 py-2.5 text-center text-lg tracking-[0.5em] font-mono text-slate-900 dark:text-white focus:outline-none focus:border-emerald-500 dark:focus:border-[#00FFB2]"
-              />
+          {error && (
+            <div className="text-red-500 dark:text-red-400 text-xs font-semibold text-center p-2 rounded-lg bg-red-500/10 border border-red-500/20">
+              {error}
             </div>
+          )}
 
-            {user.twoFactorEnabled && (
-              <div>
-                <div className="flex justify-between items-center mb-1">
-                  <label className="text-slate-500 dark:text-gray-400 text-xs font-bold flex items-center gap-1">
-                    <KeyRound className="w-3.5 h-3.5 text-blue-500 dark:text-blue-400" />
-                    <span>Google Authenticator OTP</span>
-                  </label>
-                  {!otpSent ? (
-                    <button
-                      type="button"
-                      onClick={handleSendOtp}
-                      className="text-[11px] text-emerald-600 dark:text-[#00FFB2] hover:underline"
-                    >
-                      Request SMS Backup
-                    </button>
-                  ) : (
-                    <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-mono">Code Sent to Phone</span>
-                  )}
-                </div>
-                <input
-                  type="text"
-                  maxLength={6}
-                  placeholder="000 000"
-                  value={otp}
-                  onChange={(e) => setOtp(e.target.value)}
-                  className="w-full bg-slate-100 dark:bg-gray-950 border border-slate-200 dark:border-gray-800 rounded-xl px-4 py-2.5 text-center text-sm font-mono text-slate-900 dark:text-white focus:outline-none focus:border-emerald-500 dark:focus:border-[#00FFB2]"
-                />
-              </div>
-            )}
-
-            {error && (
-              <div className="text-red-500 dark:text-red-400 text-xs font-semibold text-center p-2 rounded-lg bg-red-500/10 border border-red-500/20">
-                {error}
-              </div>
-            )}
-
-            <div className="pt-2 flex gap-3">
+          <div className="pt-2 flex gap-3">
               <button
                 type="button"
                 onClick={onCancel}

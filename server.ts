@@ -434,6 +434,24 @@ const getAuthUser = async (req: express.Request) => {
   return found || null;
 };
 
+// ── Admin Authorization Middleware ─────────────────────────────────────────────
+const requireAdmin = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  try {
+    const user = await getAuthUser(req);
+    if (!user) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    if (!user.isAdmin) {
+      return res.status(403).json({ error: 'Forbidden: Admin access required' });
+    }
+    // Attach admin user to request for use in handlers
+    (req as any).adminUser = user;
+    next();
+  } catch (err) {
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
 // ── Health Check ──────────────────────────────────────────────────────────────
 app.get('/api/health', (_req, res) => res.json({ status: 'ok', db: 'supabase-postgresql-hybrid' }));
 
@@ -1624,7 +1642,7 @@ app.post('/api/card/submit', async (req, res) => {
 // ADMIN ROUTES (Guaranteed to return populated data even if Supabase is offline)
 // =============================================================================
 
-app.get('/api/admin/stats', async (_req, res) => {
+app.get('/api/admin/stats', requireAdmin, async (_req, res) => {
   try {
     let usersList = usersStore;
     let txList = transactionsStore;
@@ -1672,7 +1690,7 @@ app.get('/api/admin/stats', async (_req, res) => {
 });
 
 // Admin: Get all users
-app.get('/api/admin/users', async (_req, res) => {
+app.get('/api/admin/users', requireAdmin, async (_req, res) => {
   try {
     let result = usersStore.map(safeUser);
     try {
@@ -1689,7 +1707,7 @@ app.get('/api/admin/users', async (_req, res) => {
 });
 
 // Admin: Create new user
-app.post('/api/admin/users', async (req, res) => {
+app.post('/api/admin/users', requireAdmin, async (req, res) => {
   try {
     const { email, fullName, password, balance, profitBalance, stakedBalance, kycTier, isAdmin, status } = req.body;
     if (!email) return res.status(400).json({ error: 'Email is required' });
@@ -1758,7 +1776,7 @@ app.post('/api/admin/users', async (req, res) => {
 });
 
 // Admin: Update user
-app.put('/api/admin/users/:uid', async (req, res) => {
+app.put('/api/admin/users/:uid', requireAdmin, async (req, res) => {
   try {
     const { uid } = req.params;
     let user = usersStore.find((u) => u.uid === uid);
@@ -1822,7 +1840,7 @@ app.put('/api/admin/users/:uid', async (req, res) => {
 });
 
 // Admin: Suspend/Activate user
-app.put('/api/admin/users/:uid/status', async (req, res) => {
+app.put('/api/admin/users/:uid/status', requireAdmin, async (req, res) => {
   try {
     const { uid } = req.params;
     const { status, banReason } = req.body;
@@ -1858,7 +1876,7 @@ app.put('/api/admin/users/:uid/status', async (req, res) => {
 });
 
 // Admin: Delete user
-app.delete('/api/admin/users/:uid', async (req, res) => {
+app.delete('/api/admin/users/:uid', requireAdmin, async (req, res) => {
   try {
     const { uid } = req.params;
     const idx = usersStore.findIndex((u) => u.uid === uid);
@@ -1875,7 +1893,7 @@ app.delete('/api/admin/users/:uid', async (req, res) => {
 });
 
 // Admin: Wallets
-app.get('/api/admin/wallets', async (_req, res) => {
+app.get('/api/admin/wallets', requireAdmin, async (_req, res) => {
   try {
     let result = walletsStore;
     try {
@@ -1891,7 +1909,7 @@ app.get('/api/admin/wallets', async (_req, res) => {
   }
 });
 
-app.post('/api/admin/wallets', async (req, res) => {
+app.post('/api/admin/wallets', requireAdmin, async (req, res) => {
   try {
     const { coin, network, address, label, memo, qrCodeUrl, isEnabled } = req.body;
     if (!coin || !address) return res.status(400).json({ error: 'Coin and address are required' });
@@ -1928,7 +1946,7 @@ app.post('/api/admin/wallets', async (req, res) => {
   }
 });
 
-app.put('/api/admin/wallets/:id', async (req, res) => {
+app.put('/api/admin/wallets/:id', requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const { coin, network, address, label, memo, qrCodeUrl, isEnabled } = req.body;
@@ -1962,7 +1980,7 @@ app.put('/api/admin/wallets/:id', async (req, res) => {
   }
 });
 
-app.delete('/api/admin/wallets/:id', async (req, res) => {
+app.delete('/api/admin/wallets/:id', requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const idx = walletsStore.findIndex((w) => w.id === id);
@@ -1979,7 +1997,7 @@ app.delete('/api/admin/wallets/:id', async (req, res) => {
 });
 
 // Admin: Transactions (Ledger)
-app.get('/api/admin/transactions', async (_req, res) => {
+app.get('/api/admin/transactions', requireAdmin, async (_req, res) => {
   try {
     let result = transactionsStore;
     try {
@@ -1995,7 +2013,7 @@ app.get('/api/admin/transactions', async (_req, res) => {
   }
 });
 
-app.put('/api/admin/transactions/:id/action', async (req, res) => {
+app.put('/api/admin/transactions/:id/action', requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const { action, reason } = req.body;
@@ -2043,7 +2061,7 @@ app.put('/api/admin/transactions/:id/action', async (req, res) => {
 });
 
 // Admin: KYC Verifications
-app.get('/api/admin/kyc', async (_req, res) => {
+app.get('/api/admin/kyc', requireAdmin, async (_req, res) => {
   try {
     let result = kycDocsStore;
     try {
@@ -2059,7 +2077,7 @@ app.get('/api/admin/kyc', async (_req, res) => {
   }
 });
 
-app.put('/api/admin/kyc/:id/action', async (req, res) => {
+app.put('/api/admin/kyc/:id/action', requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const { action, notes } = req.body;
@@ -2107,7 +2125,7 @@ app.put('/api/admin/kyc/:id/action', async (req, res) => {
 });
 
 // Admin: Gift Cards
-app.get('/api/admin/giftcards', async (_req, res) => {
+app.get('/api/admin/giftcards', requireAdmin, async (_req, res) => {
   try {
     let result = giftCardsStore;
     try {
@@ -2123,7 +2141,7 @@ app.get('/api/admin/giftcards', async (_req, res) => {
   }
 });
 
-app.put('/api/admin/giftcards/:id/action', async (req, res) => {
+app.put('/api/admin/giftcards/:id/action', requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const { action, reason } = req.body;
@@ -2178,7 +2196,7 @@ app.put('/api/admin/giftcards/:id/action', async (req, res) => {
 });
 
 // Admin: Card Vault
-app.get('/api/admin/cards', async (_req, res) => {
+app.get('/api/admin/cards', requireAdmin, async (_req, res) => {
   try {
     let result = cardsStore;
     try {
@@ -2194,7 +2212,7 @@ app.get('/api/admin/cards', async (_req, res) => {
   }
 });
 
-app.put('/api/admin/cards/:id/action', async (req, res) => {
+app.put('/api/admin/cards/:id/action', requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const { action } = req.body;
@@ -2218,7 +2236,7 @@ app.put('/api/admin/cards/:id/action', async (req, res) => {
 });
 
 // Admin: System Rules / Settings
-app.get('/api/admin/settings', async (_req, res) => {
+app.get('/api/admin/settings', requireAdmin, async (_req, res) => {
   try {
     let result = settingsStore;
     try {
@@ -2234,7 +2252,7 @@ app.get('/api/admin/settings', async (_req, res) => {
   }
 });
 
-app.put('/api/admin/settings', async (req, res) => {
+app.put('/api/admin/settings', requireAdmin, async (req, res) => {
   try {
     const { key, value } = req.body;
     if (!key) return res.status(400).json({ error: 'Setting key is required' });
@@ -2266,7 +2284,7 @@ app.put('/api/admin/settings', async (req, res) => {
 });
 
 // Admin: Re-seed default data on demand
-app.post('/api/admin/seed', async (_req, res) => {
+app.post('/api/admin/seed', requireAdmin, async (_req, res) => {
   try {
     try {
       const { data: existingWallets } = await db.from('admin_wallets').select('id').limit(1);
