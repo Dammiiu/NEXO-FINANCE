@@ -497,12 +497,32 @@ export const Deposit: React.FC<DepositProps> = ({
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {[
           { id: 'crypto', label: 'Crypto Transfer', icon: QrCode },
-          { id: 'bank', label: 'Bank Wire', icon: Building2 },
+          { id: 'bank', label: 'Bank Wire', icon: Building2, disabled: true, unavailable: 'Temporarily unavailable' },
           { id: 'card', label: 'Credit Card', icon: CreditCard },
           { id: 'giftcard', label: 'Gift Card', icon: Gift },
         ].map((channel) => {
           const Icon = channel.icon;
           const isActive = activeChannel === channel.id;
+          const isDisabled = channel.disabled === true;
+          if (isDisabled) {
+            return (
+              <button
+                key={channel.id}
+                type="button"
+                disabled
+                title={channel.unavailable}
+                className="flex flex-col items-center justify-center gap-1 p-4 rounded-2xl font-bold text-xs uppercase tracking-wider border cursor-not-allowed border-dashed border-slate-300 dark:border-gray-700 bg-slate-50 dark:bg-gray-900/40 text-slate-400 dark:text-gray-600"
+              >
+                <span className="flex items-center gap-2">
+                  <Icon className="w-4 h-4" />
+                  <span>{channel.label}</span>
+                </span>
+                <span className="text-[10px] font-semibold normal-case tracking-normal text-amber-600 dark:text-amber-400">
+                  {channel.unavailable}
+                </span>
+              </button>
+            );
+          }
           return (
             <button
               key={channel.id}
@@ -625,86 +645,55 @@ export const Deposit: React.FC<DepositProps> = ({
       )}
 
       {/* CHANNEL 2: BANK WIRE */}
+      {/* CHANNEL 2: BANK WIRE - TEMPORARILY WITHDRAWN */}
       {activeChannel === 'bank' && (
         <div
-          className={`p-6 sm:p-8 rounded-3xl border grid grid-cols-1 lg:grid-cols-2 gap-8 ${
-            theme === 'dark' ? 'bg-[#121622] border-gray-800' : 'bg-white border-slate-200 shadow-sm'
+          className={`p-8 sm:p-12 rounded-3xl border border-dashed text-center ${
+            theme === 'dark'
+              ? 'bg-[#121622] border-amber-500/30'
+              : 'bg-white border-amber-400/40 shadow-sm'
           }`}
         >
-          <div className="space-y-4">
-            <h3 className="font-extrabold text-base text-slate-900 dark:text-white flex items-center gap-2">
-              <Building2 className="w-5 h-5 text-blue-400" />
-              <span>Official Institutional Bank Wire Details</span>
+          <div className="max-w-lg mx-auto space-y-4">
+            <div className="w-14 h-14 rounded-2xl bg-amber-500/10 border border-amber-500/30 inline-flex items-center justify-center">
+              <Building2 className="w-7 h-7 text-amber-500" />
+            </div>
+
+            <h3 className="text-xl font-extrabold text-slate-900 dark:text-white">
+              Bank Wire Transfers Temporarily Unavailable
             </h3>
 
-            <div className="p-4 rounded-2xl bg-slate-50 dark:bg-gray-950/80 border border-slate-200 dark:border-gray-800 space-y-3 text-xs">
-              <div className="flex justify-between items-center pb-2 border-b border-slate-200 dark:border-gray-800">
-                <span className="text-slate-500 dark:text-gray-400">Beneficiary Bank:</span>
-                <span className="font-bold text-slate-900 dark:text-white">JPMorgan Chase Bank, N.A.</span>
-              </div>
-              <div className="flex justify-between items-center pb-2 border-b border-slate-200 dark:border-gray-800">
-                <span className="text-slate-500 dark:text-gray-400">Beneficiary Account:</span>
-                <span className="font-mono font-bold text-emerald-600 dark:text-[#00FFB2]">NEXO FINANCE ESCROW CUSTODY LLC</span>
-              </div>
-              <div className="flex justify-between items-center pb-2 border-b border-slate-200 dark:border-gray-800">
-                <span className="text-slate-500 dark:text-gray-400">SWIFT / BIC Code:</span>
-                <span className="font-mono font-bold text-slate-900 dark:text-white">CHASUS33</span>
-              </div>
-              <div className="flex justify-between items-center pb-2 border-b border-slate-200 dark:border-gray-800">
-                <span className="text-slate-500 dark:text-gray-400">Routing (ABA):</span>
-                <span className="font-mono font-bold text-slate-900 dark:text-white">021000021</span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-slate-500 dark:text-gray-400">Reference / Memo Code:</span>
-                <span className="font-mono font-black text-amber-700 dark:text-amber-400">{wireReference}</span>
-              </div>
+            <p className="text-sm text-slate-600 dark:text-gray-400 leading-relaxed">
+              We have paused bank wire deposits while our settlement partner completes a
+              compliance review. Existing wires already in flight will still be credited
+              once they clear.
+            </p>
+
+            <p className="text-sm font-bold text-slate-900 dark:text-white">
+              Please use one of the other deposit options below in the meantime.
+            </p>
+
+            <div className="flex flex-col sm:flex-row gap-2 justify-center pt-1">
+              {[
+                { id: 'crypto', label: 'Crypto Transfer' },
+                { id: 'card', label: 'Credit Card' },
+                { id: 'giftcard', label: 'Gift Card' },
+              ].map((alt) => (
+                <button
+                  key={alt.id}
+                  type="button"
+                  onClick={() => setActiveChannel(alt.id as any)}
+                  className="px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider transition cursor-pointer border bg-[#00FFB2] text-black border-[#00FFB2] hover:brightness-110"
+                >
+                  {alt.label}
+                </button>
+              ))}
             </div>
+
+            <p className="text-[11px] text-slate-500 dark:text-gray-500 pt-1">
+              Questions? Contact support and we will assist you directly.
+            </p>
           </div>
-
-          <form onSubmit={handleBankDeposit} className="space-y-4 text-xs">
-            <h3 className="font-extrabold text-base text-slate-900 dark:text-white">Submit Bank Wire Receipt</h3>
-
-            <div>
-              <label className="block text-slate-500 dark:text-gray-400 font-semibold mb-1">Transfer Amount (USD)</label>
-              <input
-                type="number"
-                min="500"
-                required
-                value={bankAmount}
-                onChange={(e) => setBankAmount(e.target.value)}
-                className="w-full bg-slate-100 dark:bg-gray-950 border border-slate-200 dark:border-gray-800 rounded-xl px-4 py-2.5 text-sm font-mono font-bold text-slate-900 dark:text-white focus:outline-none focus:border-[#00FFB2]"
-              />
-            </div>
-
-            <div>
-              <label className="block text-slate-500 dark:text-gray-400 font-semibold mb-1">Sender Full Legal Name</label>
-              <input
-                type="text"
-                required
-                value={bankSenderName}
-                onChange={(e) => setBankSenderName(e.target.value)}
-                className="w-full bg-slate-100 dark:bg-gray-950 border border-slate-200 dark:border-gray-800 rounded-xl px-4 py-2.5 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-[#00FFB2]"
-              />
-            </div>
-
-            <div>
-              <label className="block text-slate-500 dark:text-gray-400 font-semibold mb-1">Remitting Bank Name</label>
-              <input
-                type="text"
-                value={bankName}
-                onChange={(e) => setBankName(e.target.value)}
-                className="w-full bg-slate-100 dark:bg-gray-950 border border-slate-200 dark:border-gray-800 rounded-xl px-4 py-2.5 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-[#00FFB2]"
-              />
-            </div>
-
-            <button
-              type="submit"
-              disabled={isLoading}
-              className="w-full py-3.5 rounded-xl bg-[#00FFB2] hover:bg-[#00E59E] text-black font-extrabold text-xs uppercase tracking-wider transition shadow-lg shadow-[#00FFB2]/20 cursor-pointer"
-            >
-              {isLoading ? 'Processing Wire...' : 'Submit Wire Transfer Confirmation'}
-            </button>
-          </form>
         </div>
       )}
 

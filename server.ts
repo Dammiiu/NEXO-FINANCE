@@ -1344,6 +1344,78 @@ app.post('/api/investments/claim/:id', async (req, res) => {
 // TRADE ROUTES
 // =============================================================================
 
+// Resolve a live price server-side. The client must never choose the price it
+// trades at: a submitted price of 0.01 would otherwise let a caller mint an
+// unbounded amount of crypto for almost nothing.
+const resolveTradePrice = async (coin: string): Promise<number | null> => {
+  const symbol = String(coin || '').toUpperCase().replace('USDT', '');
+  if (!/^[A-Z]{2,10}$/.test(symbol)) return null;
+  const key = 'px_' + symbol;
+  const cached = cacheGet(key, 3000);
+  if (typeof cached === 'number') return cached;
+
+  const primary = await fetchJson(
+    'https://api.binance.com/api/v3/ticker/price?symbol=' + symbol + 'USDT',
+    6000
+  );
+  if (primary && typeof primary.price === 'string') {
+    const px = parseFloat(primary.price);
+    if (px > 0) return cacheSet(key, px);
+  }
+
+  const cgId = MARKET_SYMBOLS[symbol];
+  if (cgId) {
+    const cg = await fetchJson(
+      'https://api.coingecko.com/api/v3/simple/price?ids=' + cgId + '&vs_currencies=usd',
+      6000
+    );
+    const px = cg && cg[cgId] && typeof cg[cgId].usd === 'number' ? cg[cgId].usd : NaN;
+    if (px > 0) return cacheSet(key, px);
+  }
+  return null;
+};
+
+// Net filled position per coin, derived from the order ledger.
+const getHoldings = async (uid: string): Promise<Record<string, number>> => {
+  let orders: any[] = tradeOrdersStore.filter((o) => o.userId === uid && o.status === 'filled');
+  try {
+    const { data } = await db
+      .from('trade_orders')
+      .select('*')
+      .eq('user_id', uid)
+      .eq('status', 'filled');
+    if (data && data.length > 0) orders = data.map(rowToTrade);
+  } catch {}
+
+  const holdings: Record<string, number> = {};
+  for (const o of orders) {
+    const coin = String(o.pair || '').split('/')[0].toUpperCase();
+    if (!coin) continue;
+    const qty = parseFloat(o.amount) || 0;
+    holdings[coin] = (holdings[coin] || 0) + (o.type === 'buy' ? qty : -qty);
+  }
+  return holdings;
+};
+
+const recordOrder = async (order: any) => {
+  tradeOrdersStore.unshift(order);
+  try {
+    await db.from('trade_orders').insert([{
+      id: order.id,
+      user_id: order.userId,
+      pair: order.pair,
+      type: order.type,
+      order_type: order.orderType,
+      price: order.price,
+      amount: order.amount,
+      total: order.total,
+      status: order.status,
+    }]);
+  } catch (err) {
+    console.error('[trade] ledger write failed', err);
+  }
+};
+
 app.get('/api/trade/portfolio', async (req, res) => {
   try {
     const user = await getAuthUser(req);
@@ -1372,20 +1444,32 @@ app.get('/api/trade/portfolio', async (req, res) => {
       }
     }
 
-    const portfolio = Object.values(holdings)
-      .filter((h: any) => h.amount > 0.000001)
-      .map((h: any) => ({
-        coin: h.coin,
-        symbol: h.symbol,
-        amount: h.amount,
-        avgBuyPrice: h.amount > 0 ? h.totalCost / h.amount : 0,
-        currentPrice: 0,
-        value: 0,
-        pnl: 0,
-        pnlPercent: 0,
-      }));
+    // Price each position live so the holdings catalog shows real value and P/L
+    // instead of zeros.
+    const portfolio = await Promise.all(
+      Object.values(holdings)
+        .filter((h: any) => h.amount > 0.000001)
+        .map(async (h: any) => {
+          const currentPrice = (await resolveTradePrice(h.coin)) || 0;
+          const avgBuyPrice = h.amount > 0 ? h.totalCost / h.amount : 0;
+          const value = currentPrice * h.amount;
+          const pnl = value - h.totalCost;
+          return {
+            coin: h.coin,
+            symbol: h.symbol,
+            amount: h.amount,
+            avgBuyPrice,
+            currentPrice,
+            value,
+            pnl,
+            pnlPercent: avgBuyPrice > 0 ? (pnl / h.totalCost) * 100 : 0,
+          };
+        })
+    );
 
-    return res.json(portfolio);
+    // The client reads .holdings; it previously received a bare array and so
+    // always rendered an empty catalog.
+    return res.json({ holdings: portfolio });
   } catch (err) {
     return res.status(500).json({ error: 'Internal server error' });
   }
@@ -1411,50 +1495,64 @@ app.get('/api/trade/history', async (req, res) => {
   }
 });
 
+
 app.post('/api/trade/buy', async (req, res) => {
   try {
     const user = await getAuthUser(req);
     if (!user) return res.status(401).json({ error: 'Unauthorized' });
 
-    const { pair, price, amount, orderType } = req.body;
-    if (!pair || !price || !amount) return res.status(400).json({ error: 'Pair, price, and amount are required' });
+    const coin = String(req.body.symbol || req.body.pair || '').split('/')[0];
+    const requestedUsd = parseFloat(req.body.amountUsd);
+    const requestedQty = parseFloat(
+      req.body.cryptoAmount != null ? req.body.cryptoAmount : req.body.amount
+    );
 
-    const total = parseFloat(price) * parseFloat(amount);
-    if (total > user.balance) return res.status(400).json({ error: 'Insufficient balance' });
+    if (!coin) return res.status(400).json({ error: 'Choose which asset you want to buy.' });
+    if (!(requestedUsd > 0) && !(requestedQty > 0)) {
+      return res.status(400).json({ error: 'Enter an amount to buy.' });
+    }
+
+    const price = await resolveTradePrice(coin);
+    if (!price) {
+      return res.status(503).json({ error: 'Live pricing is unavailable right now. Please retry shortly.' });
+    }
+
+    // A single authoritative notional, derived from the server-side price.
+    const total = requestedUsd > 0 ? requestedUsd : requestedQty * price;
+    const amount = total / price;
+
+    if (total > user.balance + 1e-9) {
+      return res.status(400).json({
+        error: 'Insufficient balance. Available: $' + user.balance.toFixed(2),
+      });
+    }
 
     user.balance -= total;
-    const orderId = genId('ord');
     const order = {
-      id: orderId,
+      id: genId('ord'),
       userId: user.uid,
-      pair,
+      pair: coin + '/USDT',
       type: 'buy',
-      orderType: orderType || 'market',
-      price: parseFloat(price),
-      amount: parseFloat(amount),
+      orderType: req.body.orderType || 'market',
+      price,
+      amount,
       total,
       status: 'filled',
       createdAt: new Date().toISOString(),
     };
-    tradeOrdersStore.unshift(order);
+    await recordOrder(order);
+    await db.from('users').update({ balance: user.balance }).eq('uid', user.uid);
 
-    try {
-      await db.from('trade_orders').insert([{
-        id: orderId,
-        user_id: user.uid,
-        pair,
-        type: 'buy',
-        order_type: orderType || 'market',
-        price: parseFloat(price),
-        amount: parseFloat(amount),
-        total,
-        status: 'filled',
-      }]);
-      await db.from('users').update({ balance: user.balance }).eq('uid', user.uid);
-    } catch {}
-
-    return res.status(201).json({ message: 'Buy order filled', orderId });
+    return res.status(201).json({
+      message: 'Buy order filled',
+      orderId: order.id,
+      price,
+      amount,
+      total,
+      balance: user.balance,
+    });
   } catch (err) {
+    console.error('[trade] buy failed', err);
     return res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -1464,44 +1562,63 @@ app.post('/api/trade/sell', async (req, res) => {
     const user = await getAuthUser(req);
     if (!user) return res.status(401).json({ error: 'Unauthorized' });
 
-    const { pair, price, amount, orderType } = req.body;
-    if (!pair || !price || !amount) return res.status(400).json({ error: 'Pair, price, and amount are required' });
+    const coin = String(req.body.symbol || req.body.pair || '').split('/')[0];
+    const requestedUsd = parseFloat(req.body.amountUsd);
+    const requestedQty = parseFloat(
+      req.body.cryptoAmount != null ? req.body.cryptoAmount : req.body.amount
+    );
 
-    const total = parseFloat(price) * parseFloat(amount);
+    if (!coin) return res.status(400).json({ error: 'Choose which asset you want to sell.' });
+    if (!(requestedUsd > 0) && !(requestedQty > 0)) {
+      return res.status(400).json({ error: 'Enter an amount to sell.' });
+    }
+
+    const price = await resolveTradePrice(coin);
+    if (!price) {
+      return res.status(503).json({ error: 'Live pricing is unavailable right now. Please retry shortly.' });
+    }
+
+    const holdings = await getHoldings(user.uid);
+    const owned = holdings[coin] || 0;
+
+    // Sells are capped by the position actually held. Without this a caller
+    // credits an arbitrary balance by selling assets they never bought.
+    const sellQty = requestedQty > 0 ? requestedQty : requestedUsd / price;
+    if (sellQty > owned + 1e-12) {
+      return res.status(400).json({
+        error:
+          'Insufficient ' + coin + ' holdings. You hold ' +
+          owned.toFixed(8).replace(/0+$/, '').replace(/[.]$/, '') + ' ' + coin + '.',
+      });
+    }
+
+    const total = sellQty * price;
     user.balance += total;
-
-    const orderId = genId('ord');
     const order = {
-      id: orderId,
+      id: genId('ord'),
       userId: user.uid,
-      pair,
+      pair: coin + '/USDT',
       type: 'sell',
-      orderType: orderType || 'market',
-      price: parseFloat(price),
-      amount: parseFloat(amount),
+      orderType: req.body.orderType || 'market',
+      price,
+      amount: sellQty,
       total,
       status: 'filled',
       createdAt: new Date().toISOString(),
     };
-    tradeOrdersStore.unshift(order);
+    await recordOrder(order);
+    await db.from('users').update({ balance: user.balance }).eq('uid', user.uid);
 
-    try {
-      await db.from('trade_orders').insert([{
-        id: orderId,
-        user_id: user.uid,
-        pair,
-        type: 'sell',
-        order_type: orderType || 'market',
-        price: parseFloat(price),
-        amount: parseFloat(amount),
-        total,
-        status: 'filled',
-      }]);
-      await db.from('users').update({ balance: user.balance }).eq('uid', user.uid);
-    } catch {}
-
-    return res.status(201).json({ message: 'Sell order filled', orderId });
+    return res.status(201).json({
+      message: 'Sell order filled',
+      orderId: order.id,
+      price,
+      amount: sellQty,
+      total,
+      balance: user.balance,
+    });
   } catch (err) {
+    console.error('[trade] sell failed', err);
     return res.status(500).json({ error: 'Internal server error' });
   }
 });

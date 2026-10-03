@@ -118,6 +118,10 @@ export const Portfolio: React.FC<PortfolioProps> = ({
 }) => {
   const [settlements, setSettlements] = useState(RECENT_SETTLEMENTS);
 
+  // The hero chart tracks BTC. Looked up by symbol rather than index so a
+  // reordering of the ticker list cannot silently point it at another asset.
+  const btc = cryptoPrices.find((c) => c.symbol === 'BTC');
+
   useEffect(() => {
     const interval = setInterval(() => {
       const identity = GLOBAL_IDENTITIES[Math.floor(Math.random() * GLOBAL_IDENTITIES.length)];
@@ -334,7 +338,12 @@ export const Portfolio: React.FC<PortfolioProps> = ({
             isDark ? 'bg-[#121622] border-gray-800' : 'bg-white border-slate-200 shadow-sm'
           }`}
         >
-          <AreaChart theme={theme} symbol="BTC/USDT" currentPrice={cryptoPrices[0]?.price || 96420} change24h={cryptoPrices[0]?.change24h || 3.4} />
+          <AreaChart
+            theme={theme}
+            symbol="BTC/USDT"
+            currentPrice={btc?.price ?? 0}
+            change24h={btc?.change24h ?? 0}
+          />
         </div>
 
         {/* Asset Allocation Split */}

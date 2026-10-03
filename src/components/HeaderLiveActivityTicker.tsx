@@ -29,12 +29,6 @@ export const HeaderLiveActivityTicker: React.FC<HeaderLiveActivityTickerProps> =
   const [showProofModal, setShowProofModal] = useState<boolean>(false);
   const [selectedProof, setSelectedProof] = useState<LiveActivity | null>(null);
 
-  // Floating live pop-up toast state (initialized with a distinct global identity)
-  const [toastActivity, setToastActivity] = useState<LiveActivity | null>(() => {
-    return INITIAL_200_LIVE_ACTIVITIES[12] || INITIAL_200_LIVE_ACTIVITIES[0];
-  });
-  const [showToast, setShowToast] = useState<boolean>(true);
-  const toastTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Smooth 8–15 second transition cycle across all transactions
   const ROTATION_INTERVAL_MS = 8000 + Math.floor(Math.random() * 7000);
@@ -50,31 +44,6 @@ export const HeaderLiveActivityTicker: React.FC<HeaderLiveActivityTickerProps> =
     return () => clearInterval(timer);
   }, [isPaused, activities.length]);
 
-  // Periodic generation of fresh floating toast transactions every 8.5s with diverse international users
-  useEffect(() => {
-    // Initial toast hide after 5 seconds
-    toastTimeoutRef.current = setTimeout(() => {
-      setShowToast(false);
-    }, 5000);
-
-    const toastInterval = setInterval(() => {
-      const freshToastEvent = createDynamicLiveActivity(2);
-      setToastActivity(freshToastEvent);
-      setShowToast(true);
-
-      if (toastTimeoutRef.current) {
-        clearTimeout(toastTimeoutRef.current);
-      }
-      toastTimeoutRef.current = setTimeout(() => {
-        setShowToast(false);
-      }, 5500);
-    }, 8500);
-
-    return () => {
-      clearInterval(toastInterval);
-      if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
-    };
-  }, []);
 
   // Increment seconds ago timer dynamically
   useEffect(() => {
@@ -218,74 +187,6 @@ export const HeaderLiveActivityTicker: React.FC<HeaderLiveActivityTickerProps> =
 
         </div>
       </div>
-
-      {/* Floating Bottom-Right Real-Time Live Settlement Toast */}
-      {showToast && toastActivity && (
-        <div className="hidden sm:block fixed bottom-6 right-6 z-40 max-w-sm w-full animate-notification-swap select-none">
-          <div
-            onClick={() => {
-              setSelectedProof(toastActivity);
-              setShowProofModal(true);
-            }}
-            className={`p-3.5 rounded-2xl border shadow-2xl backdrop-blur-xl transition-all cursor-pointer ${
-              toastActivity.type === 'withdrawal'
-                ? 'bg-white/95 dark:bg-[#0f121d]/95 border-rose-300 dark:border-rose-500/40 text-slate-900 dark:text-white hover:border-rose-500'
-                : 'bg-white/95 dark:bg-[#0f121d]/95 border-emerald-300 dark:border-[#00FFB2]/40 text-slate-900 dark:text-white hover:border-emerald-500'
-            }`}
-          >
-            <div className="flex items-start justify-between gap-2">
-              <div className="flex items-center gap-2">
-                <span className="text-2xl">
-                  {getFlag(toastActivity.country, toastActivity.flag)}
-                </span>
-                <div>
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-xs font-black text-slate-900 dark:text-white">
-                      {toastActivity.name}
-                    </span>
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-gray-800 text-slate-600 dark:text-gray-400 font-bold">
-                      {toastActivity.country}
-                    </span>
-                  </div>
-                  <p className="text-[11px] font-medium text-slate-500 dark:text-gray-400">
-                    {toastActivity.type === 'withdrawal'
-                      ? 'Secured multi-sig withdrawal executed'
-                      : toastActivity.type === 'deposit'
-                      ? 'On-chain liquidity deposit confirmed'
-                      : 'High-yield VIP staking allocated'}
-                  </p>
-                </div>
-              </div>
-
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setShowToast(false);
-                }}
-                className="text-gray-400 hover:text-slate-900 dark:hover:text-white p-1 rounded-md transition"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            </div>
-
-            <div className="mt-2.5 pt-2 border-t border-slate-200 dark:border-gray-800 flex items-center justify-between">
-              <span
-                className={`font-mono font-black text-sm ${
-                  toastActivity.type === 'withdrawal'
-                    ? 'text-rose-600 dark:text-rose-400'
-                    : 'text-emerald-600 dark:text-[#00FFB2]'
-                }`}
-              >
-                {toastActivity.type === 'withdrawal' ? '-' : '+'}$
-                {Math.min(34900, toastActivity.amount).toLocaleString()} USD
-              </span>
-              <span className="text-[10px] font-mono text-blue-600 dark:text-blue-400 font-bold flex items-center gap-1">
-                <ShieldCheck className="w-3 h-3" /> View 0xGuard Proof
-              </span>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Proof & Ledger Inspector Modal */}
       {showProofModal && selectedProof && (

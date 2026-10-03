@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { fetchKlines } from '../lib/market';
 import {
   ResponsiveContainer,
@@ -8,6 +8,7 @@ import {
   YAxis,
   Tooltip,
   CartesianGrid,
+  ReferenceLine,
 } from 'recharts';
 
 interface ChartPoint {
@@ -47,6 +48,15 @@ function formatLabel(ts: number, timeframe: Timeframe): string {
   return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
 }
 
+// Compact axis labels so a five-figure price does not crowd the plot.
+function formatAxisPrice(v: number): string {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return '';
+  const abs = Math.abs(n);
+  if (abs >= 1000) return '$' + (n / 1000).toFixed(abs >= 100000 ? 0 : 1) + 'k';
+  return '$' + n.toFixed(2);
+}
+
 export const AreaChart: React.FC<AreaChartProps> = ({
   data,
   color,
@@ -61,6 +71,10 @@ export const AreaChart: React.FC<AreaChartProps> = ({
   const [feedError, setFeedError] = useState(false);
 
   const coin = String(symbol).split('/')[0].toUpperCase();
+
+  // Gradient ids live in the document, not the component. Two charts sharing
+  // one id would paint each other's fills, so scope it to this symbol.
+  const gradientId = 'priceFill-' + String(symbol).replace(/[^a-zA-Z0-9]/g, '');
 
   useEffect(() => {
     if (data && data.length > 0) {
@@ -116,6 +130,19 @@ export const AreaChart: React.FC<AreaChartProps> = ({
   const seriesChange = first > 0 ? ((last - first) / first) * 100 : 0;
   const shownChange = points.length > 0 ? seriesChange : change24h;
   const shownPrice = points.length > 0 ? last : currentPrice;
+
+  // Pad the vertical range so the series never sits flush against the frame.
+  const yDomain = useMemo<[number, number]>(() => {
+    if (points.length === 0) return ['auto', 'auto'] as unknown as [number, number];
+    const values = points.map((p) => p.price).filter((v) => Number.isFinite(v));
+    if (values.length === 0) return ['auto', 'auto'] as unknown as [number, number];
+    const lo = Math.min(...values);
+    const hi = Math.max(...values);
+    const pad = (hi - lo) * 0.12 || Math.max(hi * 0.01, 1);
+    return [Math.max(0, lo - pad), hi + pad];
+  }, [points]);
+
+  const rangeOpen = points.length > 0 ? points[0].price : 0;
 
   return (
     <div className="w-full flex flex-col space-y-4">
@@ -189,7 +216,7 @@ export const AreaChart: React.FC<AreaChartProps> = ({
           <ResponsiveContainer width="100%" height="100%">
             <RechartsAreaChart data={points} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
               <defs>
-                <linearGradient id="areaGradient" x1="0" y1="0" x2="0" y2="1">
+                <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
                   <stop offset="5%" stopColor={strokeColor} stopOpacity={0.35} />
                   <stop offset="95%" stopColor={strokeColor} stopOpacity={0} />
                 </linearGradient>
@@ -208,27 +235,56 @@ export const AreaChart: React.FC<AreaChartProps> = ({
                 minTickGap={28}
               />
               <YAxis
-                domain={['auto', 'auto']}
+                domain={yDomain}
                 stroke={theme === 'dark' ? '#64748B' : '#94A3B8'}
                 fontSize={11}
                 tickLine={false}
                 axisLine={false}
-                tickFormatter={(v: number) => '$' + Number(v).toLocaleString()}
+                tickCount={5}
+                width={66}
+                tickFormatter={formatAxisPrice}
               />
               <Tooltip
-                contentStyle={{
-                  backgroundColor: theme === 'dark' ? '#0B0E14' : '#FFFFFF',
-                  borderColor: theme === 'dark' ? '#1E293B' : '#CBD5E1',
-                  borderRadius: '12px',
-                  boxShadow: '0 10px 25px -5px rgba(0,0,0,0.3)',
-                  color: theme === 'dark' ? '#FFFFFF' : '#0F172A',
-                  fontSize: '12px',
-                  fontWeight: 600,
+                cursor={{ stroke: theme === 'dark' ? '#334155' : '#CBD5E1', strokeWidth: 1 }}
+                content={({ active, payload }) => {
+                  if (!active || !payload || !payload.length) return null;
+                  const pt = payload[0].payload as ChartPoint;
+                  const delta = rangeOpen > 0 ? ((pt.price - rangeOpen) / rangeOpen) * 100 : 0;
+                  const up = delta >= 0;
+                  return (
+                    <div
+                      className={
+                        'rounded-xl border px-3 py-2 shadow-xl ' +
+                        (theme === 'dark'
+                          ? 'bg-[#0B0E14] border-[#1E293B]'
+                          : 'bg-white border-slate-200')
+                      }
+                    >
+                      <div className="text-[10px] uppercase tracking-wider text-slate-500 dark:text-gray-400">
+                        {new Date(pt.timestamp).toLocaleString([], {
+                          month: 'short',
+                          day: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}
+                      </div>
+                      <div className="text-sm font-black text-slate-900 dark:text-white">
+                        {'$' +
+                          Number(pt.price).toLocaleString(undefined, {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}
+                      </div>
+                      <div
+                        className={
+                          'text-[11px] font-bold ' + (up ? 'text-emerald-500' : 'text-rose-500')
+                        }
+                      >
+                        {(up ? '+' : '') + delta.toFixed(2)}% vs range open
+                      </div>
+                    </div>
+                  );
                 }}
-                formatter={(val: number) => [
-                  '$' + Number(val).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
-                  'Price',
-                ]}
               />
               <Area
                 type="monotone"
@@ -236,9 +292,22 @@ export const AreaChart: React.FC<AreaChartProps> = ({
                 stroke={strokeColor}
                 strokeWidth={2.5}
                 fillOpacity={1}
-                fill="url(#areaGradient)"
+                fill={'url(#' + gradientId + ')'}
                 isAnimationActive={false}
               />
+              {points.length > 0 && (
+                <ReferenceLine
+                  y={last}
+                  stroke={theme === 'dark' ? '#475569' : '#94A3B8'}
+                  strokeDasharray="3 3"
+                  label={{
+                    value: '$' + last.toLocaleString(undefined, { maximumFractionDigits: 2 }),
+                    position: 'insideTopRight',
+                    fill: theme === 'dark' ? '#94A3B8' : '#64748B',
+                    fontSize: 10,
+                  }}
+                />
+              )}
             </RechartsAreaChart>
           </ResponsiveContainer>
         )}

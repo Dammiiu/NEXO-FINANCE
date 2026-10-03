@@ -30,15 +30,18 @@ export const Trade: React.FC<TradeProps> = ({
   theme = 'dark',
   onRefreshUser,
 }) => {
+  // Placeholder used only until the first live ticker arrives. Price is zero so
+// the form cannot quote or submit against a stale hardcoded number; the
+// server resolves the real fill price regardless.
   const [selectedCoin, setSelectedCoin] = useState<CryptoAsset>(cryptoPrices[0] || {
     symbol: 'BTC',
     name: 'Bitcoin',
-    price: 96420,
-    change24h: 3.45,
-    high24h: 98100,
-    low24h: 94200,
-    volume24h: 42000000000,
-    sparkline: [94000, 94500, 95200, 96420],
+    price: 0,
+    change24h: 0,
+    high24h: 0,
+    low24h: 0,
+    volume24h: 0,
+    sparkline: [],
   });
 
   const [tradeType, setTradeType] = useState<'buy' | 'sell'>('buy');
@@ -100,9 +103,34 @@ export const Trade: React.FC<TradeProps> = ({
       return;
     }
 
+    if (!(selectedCoin.price > 0)) {
+      setErrorMessage('Waiting for the live price feed. Please try again in a moment.');
+      return;
+    }
+
     if (tradeType === 'buy' && val > (user?.balance ?? 0)) {
        setErrorMessage(`Insufficient cash balance ($${(user?.balance ?? 0).toLocaleString()}) to execute this buy order.`);
       return;
+    }
+
+    if (tradeType === 'sell') {
+      const held = holdings.find((h) => h.symbol === selectedCoin.symbol);
+      const heldAmount = held ? parseFloat(String(held.amount)) : 0;
+      const wantQty = parseFloat(cryptoAmount) || 0;
+      if (!held || heldAmount <= 0) {
+        setErrorMessage(
+          `You do not currently hold any ${selectedCoin.symbol}. Buy ${selectedCoin.symbol} before selling.`
+        );
+        return;
+      }
+      if (wantQty > heldAmount + 1e-12) {
+        setErrorMessage(
+          `Insufficient ${selectedCoin.symbol} holdings. You hold ${heldAmount.toLocaleString(undefined, {
+            maximumFractionDigits: 8,
+          })} ${selectedCoin.symbol}.`
+        );
+        return;
+      }
     }
 
     setIsLoading(true);
@@ -119,13 +147,20 @@ export const Trade: React.FC<TradeProps> = ({
           coinName: selectedCoin.name,
           amountUsd: val,
           cryptoAmount: parseFloat(cryptoAmount),
+          // The server resolves the authoritative price itself and ignores this
+          // value, so a tampered request cannot move the fill price.
           price: selectedCoin.price,
         }),
       });
       const data = await res.json();
       if (res.ok) {
+        const filledQty = typeof data.amount === 'number' ? data.amount : parseFloat(cryptoAmount);
         setMessage(
-          `Successfully executed ${tradeType.toUpperCase()} order of ${cryptoAmount} ${selectedCoin.symbol} ($${val.toLocaleString()})!`
+          `Filled ${tradeType.toUpperCase()} of ${filledQty.toLocaleString(undefined, {
+            maximumFractionDigits: 8,
+          })} ${selectedCoin.symbol} at $${Number(data.price ?? selectedCoin.price).toLocaleString(undefined, {
+            maximumFractionDigits: 2,
+          })} ($${Number(data.total ?? val).toLocaleString(undefined, { maximumFractionDigits: 2 })}).`
         );
         onRefreshUser();
         fetchPortfolioAndOrders();
@@ -406,13 +441,15 @@ export const Trade: React.FC<TradeProps> = ({
                   return (
                     <tr key={h.symbol} className="hover:bg-slate-50 dark:hover:bg-gray-800/30">
                       <td className="py-3 font-extrabold text-sm text-slate-900 dark:text-white">{h.symbol}</td>
-                      <td className="py-3 font-mono font-bold text-slate-900 dark:text-white">{h.amount.toFixed(4)}</td>
-                      <td className="py-3 font-mono text-slate-500 dark:text-gray-400">${h.avgBuyPrice.toLocaleString()}</td>
-                      <td className="py-3 font-mono text-slate-900 dark:text-white font-bold">${h.currentPrice.toLocaleString()}</td>
-                      <td className="py-3 font-mono font-bold text-emerald-600 dark:text-[#00FFB2]">${h.value.toLocaleString()}</td>
+                      <td className="py-3 font-mono font-bold text-slate-900 dark:text-white">{Number(h.amount).toLocaleString(undefined, { maximumFractionDigits: 8 })}</td>
+                      <td className="py-3 font-mono text-slate-500 dark:text-gray-400">${h.avgBuyPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                      <td className="py-3 font-mono text-slate-900 dark:text-white font-bold">${h.currentPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                      <td className="py-3 font-mono font-bold text-emerald-600 dark:text-[#00FFB2]">${h.value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                       <td className="py-3">
                         <span className={`font-bold font-mono ${isProfit ? 'text-emerald-600 dark:text-emerald-500' : 'text-rose-600 dark:text-rose-500'}`}>
-                          {isProfit ? '+' : ''}${h.pnl.toLocaleString()} ({h.pnlPercent}%)
+                          {isProfit ? '+' : '-'
+                          }${Math.abs(h.pnl).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}{' '}
+                          ({isProfit ? '+' : ''}{Number(h.pnlPercent).toFixed(2)}%)
                         </span>
                       </td>
                       <td className="py-3 text-right">
