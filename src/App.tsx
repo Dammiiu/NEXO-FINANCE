@@ -125,19 +125,31 @@ export const App: React.FC = () => {
     }
   };
 
+  const applyBanner = (settings: any) => {
+    const banner = (settings || []).find((s: any) => s.key === 'global_alert_banner')?.value;
+    if (banner) setGlobalBanner(banner);
+  };
+
   const fetchGlobalSettings = async () => {
     try {
-      // /api/admin/settings sits behind the admin guard, so it must be called
-      // with the session token or it answers 401 and looks like an expired login.
-      const token = localStorage.getItem('nexo_authToken') || authToken || '';
-      const res = await fetch('/api/admin/settings', {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
+      // The banner is shown to every user, so use the public route. Never fall
+      // back to the admin-guarded route for a normal account: that answers 401
+      // even with a valid token, which the session guard would treat as an
+      // expired login and sign the user straight back out.
+      const res = await fetch('/api/settings/public');
       if (res.ok) {
-        const settings = await res.json();
-        const banner = settings.find((s: any) => s.key === 'global_alert_banner')?.value;
-        if (banner) setGlobalBanner(banner);
+        applyBanner(await res.json());
+        return;
       }
+
+      // Backend predates the public route; admins can still read it directly.
+      if (!user?.isAdmin) return;
+      const token = authToken || localStorage.getItem('nexo_authToken') || '';
+      if (!token) return;
+      const adminRes = await fetch('/api/admin/settings', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (adminRes.ok) applyBanner(await adminRes.json());
     } catch (err) {
       console.error(err);
     }

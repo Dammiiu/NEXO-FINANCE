@@ -1,5 +1,6 @@
 node_modules
 dist
+dist-server
 .env
 .dev.env.json
 .DS_Store

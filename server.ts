@@ -6,7 +6,7 @@ import { fileURLToPath } from 'url';
 import path from 'path';
 
 const app = express();
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
 
 // ── Supabase Client ───────────────────────────────────────────────────────────
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://edpbhfxkflgtqgygjfyg.supabase.co';
@@ -417,7 +417,12 @@ const getAuthUser = async (req: express.Request) => {
   }
 
   // 2. Extract UID from standard token format: token_{uid}_{timestamp}
-  const match = token.match(/^token_(usr_[a-zA-Z0-9_-]+)/);
+  // Tokens are `token_{uid}_{epochMs}` and the uid itself contains underscores
+  // (e.g. usr_1770000000000_a1b2). Matching only up to the first underscore
+  // swallowed the timestamp, so we looked up a uid that does not exist and
+  // every non-seeded account got 401 straight after login. Anchor on the
+  // trailing numeric timestamp instead.
+  const match = token.match(/^token_(.+)_d+$/);
   const uid = match ? match[1] : (token.startsWith('usr_') ? token : null);
 
   if (uid) {
@@ -2571,17 +2576,38 @@ app.get('/api/market/klines', async (req, res) => {
   return res.json(cacheSet(key, points));
 });
 
-const isEntrypoint = () => {
+// Public platform settings. The alert banner and platform rules are shown to
+// every signed-in user, so they must not sit behind the admin guard. Returns the
+// same rows as /api/admin/settings; none of these values are sensitive.
+app.get('/api/settings/public', async (_req, res) => {
   try {
-    if (process.env.NETLIFY || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.LAMBDA_TASK_ROOT || process.env.VERCEL) {
-      return false;
-    }
-    const thisFile = fileURLToPath(import.meta.url);
-    const entryFile = process.argv[1] ? path.resolve(process.argv[1]) : '';
-    return thisFile === entryFile;
-  } catch {
-    return false;
+    let result = settingsStore;
+    try {
+      const { data, error } = await db.from('global_settings').select('*').order('key');
+      if (data && !error && data.length > 0) {
+        result = mergeStore(data.map(rowToSetting), result, 'key');
+      }
+    } catch {}
+    res.set('Cache-Control', 'no-store');
+    return res.json(result);
+  } catch (err) {
+    return res.status(500).json({ error: 'Internal server error' });
   }
+});
+
+// Only skip listen() when a serverless platform has already set this module up
+// as the handler. Everywhere else this file is the process entry point.
+// The previous implementation compared import.meta.url against argv, which
+// throws in a CommonJS bundle and silently stopped the server from listening.
+const isEntrypoint = () => {
+  const serverless = [
+    process.env.NETLIFY,
+    process.env.AWS_LAMBDA_FUNCTION_NAME,
+    process.env.LAMBDA_TASK_ROOT,
+    process.env.VERCEL,
+    process.env.WORKER,
+  ];
+  return !serverless.some(Boolean);
 };
 
 export default app;
