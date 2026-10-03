@@ -402,6 +402,10 @@ const rowToTrade = (r: any) => ({
 });
 
 // ── Auth Helper (Robust Dual-Layer) ──────────────────────────────────────────
+// token_{uid}_{epochMs} - uid itself contains underscores, so anchor on the
+// trailing numeric timestamp rather than the first underscore.
+const TOKEN_RE = /^token_(.+)_\d+$/;
+
 const getAuthUser = async (req: express.Request) => {
   const authHeader = req.headers.authorization || '';
   const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader;
@@ -422,7 +426,7 @@ const getAuthUser = async (req: express.Request) => {
   // swallowed the timestamp, so we looked up a uid that does not exist and
   // every non-seeded account got 401 straight after login. Anchor on the
   // trailing numeric timestamp instead.
-  const match = token.match(/^token_(.+)_d+$/);
+  const match = token.match(TOKEN_RE);
   const uid = match ? match[1] : (token.startsWith('usr_') ? token : null);
 
   if (uid) {
@@ -438,6 +442,25 @@ const getAuthUser = async (req: express.Request) => {
   const found = usersStore.find((u) => token.includes(u.uid) || (u.email && token.includes(u.email)));
   return found || null;
 };
+
+// A stripped backslash in that regex once shipped as _d+$ instead of _\d+$,
+// which silently matched no uid and logged every non-admin out. Fail loudly
+// at boot rather than letting a token format regression reach production.
+const TOKEN_REGEX_SELF_TEST = (() => {
+  const samples = [
+    ['token_usr_institutional_01_1770000000000', 'usr_institutional_01'],
+    ['token_usr_1770000000000_a1b2_1770000000123', 'usr_1770000000000_a1b2'],
+  ];
+  for (const [token, expected] of samples) {
+    const got = (token.match(TOKEN_RE) || [])[1];
+    if (got !== expected) {
+      console.error('FATAL: token regex is broken. Expected uid for ' + token +
+        ' to be ' + expected + ' but got ' + JSON.stringify(got));
+      process.exit(1);
+    }
+  }
+  return true;
+})();
 
 // ── Admin Authorization Middleware ─────────────────────────────────────────────
 const requireAdmin = async (req: express.Request, res: express.Response, next: express.NextFunction) => {

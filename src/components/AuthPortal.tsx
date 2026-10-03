@@ -181,55 +181,25 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
         }
       }
 
-      // Resilient client-side session if backend is temporarily unavailable
-      const fallbackUser: UserProfile = {
-        uid: `usr_g_${Date.now()}`,
-        email: googleEmail,
-        fullName: googleName,
-        country: 'United States',
-        balance: 4250.0,
-        profitBalance: 0,
-        stakedBalance: 0,
-        totalWithdrawn: 0,
-        totalDeposited: 0,
-        kycStatus: 'unverified',
-        kycTier: 0,
-        isAdmin: false,
-        isVerified: false,
-        hasDepositedMinimum: false,
-        withdrawalFeePaid: false,
-        twoFactorEnabled: false,
-        referralCode: `NEXO-${Math.random().toString(36).substring(2, 7).toUpperCase()}`,
-        referralEarnings: 0,
-        avatarUrl: googlePicture,
-        createdAt: new Date().toISOString(),
-      };
-      onAuthSuccess(fallbackUser, `token_${fallbackUser.uid}_${Date.now()}`);
+      // Never invent a session. A fabricated token does not exist server-side,
+      // so the next authenticated call answers 401 and the session guard signs
+      // the user straight back out - and it rendered a balance the server never
+      // issued. Report the actual failure instead.
+      let message = 'We could not complete your sign-in right now. Please try again.';
+      if (res.status === 403) {
+        const err = await res.json().catch(() => null);
+        message = (err && err.error) || 'Sign-in was refused. Please contact support.';
+      } else if (res.status === 400) {
+        const err = await res.json().catch(() => null);
+        message = (err && err.error) || 'Google did not return an email address.';
+      }
+      setErrorMessage(message);
     } catch {
-      // Network unavailable — still allow access with correct Google identity
-      const fallbackUser: UserProfile = {
-        uid: `usr_g_${Date.now()}`,
-        email: googleEmail,
-        fullName: googleName,
-        country: 'United States',
-        balance: 4250.0,
-        profitBalance: 0,
-        stakedBalance: 0,
-        totalWithdrawn: 0,
-        totalDeposited: 0,
-        kycStatus: 'unverified',
-        kycTier: 0,
-        isAdmin: false,
-        isVerified: false,
-        hasDepositedMinimum: false,
-        withdrawalFeePaid: false,
-        twoFactorEnabled: false,
-        referralCode: `NEXO-${Math.random().toString(36).substring(2, 7).toUpperCase()}`,
-        referralEarnings: 0,
-        avatarUrl: googlePicture,
-        createdAt: new Date().toISOString(),
-      };
-      onAuthSuccess(fallbackUser, `token_${fallbackUser.uid}_${Date.now()}`);
+      // The network call itself failed. Do not fabricate a session - a made-up
+      // token cannot authenticate and would bounce the user straight back out.
+      setErrorMessage(
+        'We could not reach the server. Check your connection and try again.'
+      );
     } finally {
       setAuthLoadingType(null);
     }
