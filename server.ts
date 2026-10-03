@@ -1354,20 +1354,19 @@ const resolveTradePrice = async (coin: string): Promise<number | null> => {
   const cached = cacheGet(key, 3000);
   if (typeof cached === 'number') return cached;
 
-  const primary = await fetchJson(
-    'https://api.binance.com/api/v3/ticker/price?symbol=' + symbol + 'USDT',
-    6000
-  );
-  if (primary && typeof primary.price === 'string') {
-    const px = parseFloat(primary.price);
-    if (px > 0) return cacheSet(key, px);
+  for (const host of MARKET_HOSTS) {
+    const j = await fetchJson(host + '/api/v3/ticker/price?symbol=' + symbol + 'USDT', 5000);
+    if (j && typeof j.price === 'string') {
+      const px = parseFloat(j.price);
+      if (px > 0) return cacheSet(key, px);
+    }
   }
 
   const cgId = MARKET_SYMBOLS[symbol];
   if (cgId) {
     const cg = await fetchJson(
       'https://api.coingecko.com/api/v3/simple/price?ids=' + cgId + '&vs_currencies=usd',
-      6000
+      5000
     );
     const px = cg && cg[cgId] && typeof cg[cgId].usd === 'number' ? cg[cgId].usd : NaN;
     if (px > 0) return cacheSet(key, px);
@@ -2586,6 +2585,15 @@ const MARKET_SYMBOLS: Record<string, string> = {
 
 const marketCache = new Map<string, { at: number; data: any }>();
 
+// Exchange hosts tried in order. The API host cannot reach Binance's primary
+// domain, so data-api.binance.vision (the market-data-only endpoint) leads.
+const MARKET_HOSTS = [
+  'https://data-api.binance.vision',
+  'https://api.binance.com',
+  'https://api1.binance.com',
+  'https://api2.binance.com',
+];
+
 const cacheGet = (key: string, ttlMs: number) => {
   const hit = marketCache.get(key);
   if (hit && Date.now() - hit.at < ttlMs) return hit.data;
@@ -2625,9 +2633,17 @@ app.get('/api/market/tickers', async (_req, res) => {
 
   // USDT/USDT is not a tradable Binance pair, so it is pinned separately below.
   const pairs = Object.keys(MARKET_SYMBOLS).filter((s) => s !== 'USDT').map((s) => s + 'USDT');
-  const binance = await fetchJson(
-    'https://api.binance.com/api/v3/ticker/24hr?symbols=' + encodeURIComponent(JSON.stringify(pairs))
-  );
+  let binance: any = null;
+  for (const host of MARKET_HOSTS) {
+    const j = await fetchJson(
+      host + '/api/v3/ticker/24hr?symbols=' + encodeURIComponent(JSON.stringify(pairs)),
+      6000
+    );
+    if (Array.isArray(j) && j.length > 0) {
+      binance = j;
+      break;
+    }
+  }
 
   let out: any[] | null = null;
 
@@ -2696,9 +2712,18 @@ app.get('/api/market/klines', async (req, res) => {
   const cached = cacheGet(key, 45000);
   if (cached) return res.json(cached);
 
-  const raw = await fetchJson(
-    'https://api.binance.com/api/v3/klines?symbol=' + coin + 'USDT&interval=' + interval + '&limit=' + limit
-  );
+  // Try each host until one answers, for the same reason as resolveTradePrice.
+  let raw: any = null;
+  for (const host of MARKET_HOSTS) {
+    const j = await fetchJson(
+      host + '/api/v3/klines?symbol=' + coin + 'USDT&interval=' + interval + '&limit=' + limit,
+      6000
+    );
+    if (Array.isArray(j) && j.length > 0) {
+      raw = j;
+      break;
+    }
+  }
 
   if (!Array.isArray(raw)) {
     return res.status(503).json({ error: 'Chart data provider unavailable' });
