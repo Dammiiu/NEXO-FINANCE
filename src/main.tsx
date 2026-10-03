@@ -43,14 +43,30 @@ import "./index.css";
     return input;
   };
 
+  // A 401 only means "your session expired" when we actually sent a token.
+  // Public endpoints can answer 401 for other reasons and must never be able
+  // to sign the user out.
+  const sentAuth = (input: RequestInfo | URL, init?: RequestInit): boolean => {
+    const scan = (h: any): boolean => {
+      if (!h) return false;
+      if (typeof h.has === "function") return h.has("Authorization");
+      if (Array.isArray(h)) return h.some((p) => String(p[0]).toLowerCase() === "authorization");
+      return Object.keys(h).some((k) => k.toLowerCase() === "authorization");
+    };
+    if (init && init.headers) return scan(init.headers);
+    if (typeof Request !== "undefined" && input instanceof Request) return input.headers.has("Authorization");
+    return false;
+  };
+
   window.fetch = async function patchedFetch(input: RequestInfo | URL, init?: RequestInit) {
     const target = toApiUrl(input);
     const rawUrl = typeof target === "string" ? target : String(target);
     const isApiCall = rawUrl.includes("/api/");
+    const wasAuthenticated = isApiCall && sentAuth(input, init);
 
     const res = await nativeFetch(target as RequestInfo, init);
 
-    if (isApiCall && res.status === 401) {
+    if (wasAuthenticated && res.status === 401) {
       const alreadyRecovered = sessionStorage.getItem(RELOAD_FLAG) === "1";
       const hadSession = !!localStorage.getItem("nexo_authToken");
 

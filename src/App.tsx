@@ -127,7 +127,12 @@ export const App: React.FC = () => {
 
   const fetchGlobalSettings = async () => {
     try {
-      const res = await fetch('/api/admin/settings');
+      // /api/admin/settings sits behind the admin guard, so it must be called
+      // with the session token or it answers 401 and looks like an expired login.
+      const token = localStorage.getItem('nexo_authToken') || authToken || '';
+      const res = await fetch('/api/admin/settings', {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
       if (res.ok) {
         const settings = await res.json();
         const banner = settings.find((s: any) => s.key === 'global_alert_banner')?.value;
