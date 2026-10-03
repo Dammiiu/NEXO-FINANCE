@@ -5,3 +5,4 @@ dist-server
 .dev.env.json
 .DS_Store
 *.log
+*.cjs
