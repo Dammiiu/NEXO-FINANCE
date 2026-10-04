@@ -88,7 +88,7 @@ export const Trade: React.FC<TradeProps> = ({
   useEffect(() => {
     const usd = parseFloat(amountUsd) || 0;
     if (selectedCoin.price > 0) {
-      setCryptoAmount((usd / selectedCoin.price).toFixed(6));
+      setCryptoAmount((usd / selectedCoin.price).toFixed(8));
     }
   }, [amountUsd, selectedCoin]);
 
@@ -113,6 +113,11 @@ export const Trade: React.FC<TradeProps> = ({
       return;
     }
 
+    // Sells are clamped to the position actually held. The USD input implies a
+    // quantity, and rounding that to a fixed number of decimals could ask for
+    // marginally more than the holding - which used to reject selling the whole
+    // position.
+    let sellQty = 0;
     if (tradeType === 'sell') {
       const held = holdings.find((h) => h.symbol === selectedCoin.symbol);
       const heldAmount = held ? parseFloat(String(held.amount)) : 0;
@@ -123,13 +128,18 @@ export const Trade: React.FC<TradeProps> = ({
         );
         return;
       }
-      if (wantQty > heldAmount + 1e-12) {
-        setErrorMessage(
-          `Insufficient ${selectedCoin.symbol} holdings. You hold ${heldAmount.toLocaleString(undefined, {
-            maximumFractionDigits: 8,
-          })} ${selectedCoin.symbol}.`
-        );
-        return;
+      if (wantQty > heldAmount) {
+        if (wantQty - heldAmount > heldAmount * 0.001) {
+          setErrorMessage(
+            `Insufficient ${selectedCoin.symbol} holdings. You hold ${heldAmount.toLocaleString(undefined, {
+              maximumFractionDigits: 8,
+            })} ${selectedCoin.symbol}.`
+          );
+          return;
+        }
+        sellQty = heldAmount;
+      } else {
+        sellQty = wantQty;
       }
     }
 
@@ -146,7 +156,7 @@ export const Trade: React.FC<TradeProps> = ({
           symbol: selectedCoin.symbol,
           coinName: selectedCoin.name,
           amountUsd: val,
-          cryptoAmount: parseFloat(cryptoAmount),
+          cryptoAmount: tradeType === 'sell' ? sellQty : parseFloat(cryptoAmount),
           // The server resolves the authoritative price itself and ignores this
           // value, so a tampered request cannot move the fill price.
           price: selectedCoin.price,
