@@ -90,7 +90,7 @@ export const HeaderLiveActivityTicker: React.FC<HeaderLiveActivityTickerProps> =
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#00FFB2] opacity-75"></span>
               <span className="relative inline-flex rounded-full h-2 w-2 bg-[#00FFB2]"></span>
             </span>
-            <span className="uppercase text-[10px] font-mono font-black">
+            <span className="uppercase text-[10px] font-mono font-black hidden sm:inline">
               Live Transactions
             </span>
           </div>
@@ -103,27 +103,28 @@ export const HeaderLiveActivityTicker: React.FC<HeaderLiveActivityTickerProps> =
                 setSelectedProof(currentActivity);
                 setShowProofModal(true);
               }}
-              className={`flex-1 flex items-center justify-between gap-2 px-3 py-1.5 rounded-xl border transition-all duration-300 cursor-pointer overflow-hidden animate-notification-swap ${
+              className={`flex-1 flex items-center justify-between gap-1.5 sm:gap-2 px-2 sm:px-3 py-1.5 rounded-xl border transition-all duration-300 cursor-pointer overflow-hidden animate-notification-swap ${
                 currentActivity.type === 'withdrawal'
                   ? 'bg-rose-50 dark:bg-rose-950/30 border-rose-200 dark:border-rose-500/40 hover:border-rose-400 shadow-xs'
                   : 'bg-white dark:bg-gray-900/90 border-slate-300 dark:border-gray-700/80 hover:border-emerald-500 dark:hover:border-[#00FFB2]/60 shadow-xs'
               }`}
               title="Click to inspect verified 0xGuard Cryptographic Settlement Proof"
             >
-              <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap overflow-hidden">
+              <div className="flex items-center gap-1.5 sm:gap-2 min-w-0 overflow-hidden">
                 <span className="text-base shrink-0">
                   {getFlag(currentActivity.country, currentActivity.flag)}
                 </span>
 
-                {/* Investor Name & Country */}
-                <div className="flex items-center gap-1.5 shrink-0">
-                  <span className="text-[10px] uppercase font-black text-slate-500 dark:text-gray-400">
+                {/* Investor Name & Country. Secondary labels drop away on small
+                    screens so the amount always stays readable. */}
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <span className="text-[10px] uppercase font-black text-slate-500 dark:text-gray-400 hidden sm:inline">
                     Investor:
                   </span>
-                  <span className="text-xs sm:text-sm font-black tracking-tight shrink-0 text-slate-900 dark:text-white">
+                  <span className="text-xs sm:text-sm font-black tracking-tight truncate text-slate-900 dark:text-white">
                     {currentActivity.name}
                   </span>
-                  <span className="text-[11px] font-bold px-1.5 py-0.5 rounded-md whitespace-nowrap bg-slate-200 dark:bg-gray-800 text-slate-800 dark:text-gray-200 border border-slate-300 dark:border-gray-700">
+                  <span className="text-[11px] font-bold px-1.5 py-0.5 rounded-md whitespace-nowrap bg-slate-200 dark:bg-gray-800 text-slate-800 dark:text-gray-200 border border-slate-300 dark:border-gray-700 hidden md:inline">
                     {currentActivity.country}
                   </span>
                 </div>
@@ -135,7 +136,7 @@ export const HeaderLiveActivityTicker: React.FC<HeaderLiveActivityTickerProps> =
                   <div className="flex items-center gap-1.5 shrink-0">
                     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-black uppercase tracking-wider bg-rose-100 dark:bg-rose-500/20 text-rose-800 dark:text-rose-400 border border-rose-300 dark:border-rose-500/40">
                       <ArrowUpRight className="w-3.5 h-3.5 stroke-[3]" />
-                      <span>Disbursal</span>
+                      <span className="hidden sm:inline">Disbursal</span>
                     </span>
                     <span className="font-mono font-black text-xs sm:text-sm text-rose-700 dark:text-rose-400">
                       -${Math.min(34900, currentActivity.amount).toLocaleString()} USD
@@ -145,7 +146,7 @@ export const HeaderLiveActivityTicker: React.FC<HeaderLiveActivityTickerProps> =
                   <div className="flex items-center gap-1.5 shrink-0">
                     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-black uppercase tracking-wider bg-emerald-100 dark:bg-emerald-500/20 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-500/40">
                       <ArrowDownLeft className="w-3.5 h-3.5 stroke-[3]" />
-                      <span>Deposit</span>
+                      <span className="hidden sm:inline">Deposit</span>
                     </span>
                     <span className="font-mono font-black text-xs sm:text-sm text-emerald-700 dark:text-emerald-300">
                       +${Math.min(34900, currentActivity.amount).toLocaleString()} USD
@@ -155,7 +156,7 @@ export const HeaderLiveActivityTicker: React.FC<HeaderLiveActivityTickerProps> =
                   <div className="flex items-center gap-1.5 shrink-0">
                     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-black uppercase tracking-wider bg-teal-100 dark:bg-[#00FFB2]/20 text-teal-800 dark:text-[#00FFB2] border border-teal-300 dark:border-[#00FFB2]/40">
                       <Sparkles className="w-3.5 h-3.5" />
-                      <span>Staking</span>
+                      <span className="hidden sm:inline">Staking</span>
                     </span>
                     <span className="font-mono font-black text-xs sm:text-sm text-teal-800 dark:text-[#00FFB2]">
                       ${Math.min(34900, currentActivity.amount).toLocaleString()} USD
@@ -170,13 +171,13 @@ export const HeaderLiveActivityTicker: React.FC<HeaderLiveActivityTickerProps> =
               </div>
 
               {/* Right: Timestamp & Proof Verification Pill */}
-              <div className="flex items-center gap-2 shrink-0">
+              <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
                 <span className="text-[10px] font-mono whitespace-nowrap text-slate-500 dark:text-gray-400">
                   {currentActivity.timeAgoSeconds < 60
                     ? `${currentActivity.timeAgoSeconds}s ago`
                     : `${Math.floor(currentActivity.timeAgoSeconds / 60)}m ago`}
                 </span>
-                <span className="text-[10px] px-2 py-0.5 rounded-md font-black hidden sm:inline bg-blue-100 dark:bg-blue-500/20 text-blue-800 dark:text-blue-400 border border-blue-200 dark:border-blue-500/30">
+                <span className="text-[10px] px-2 py-0.5 rounded-md font-black hidden lg:inline bg-blue-100 dark:bg-blue-500/20 text-blue-800 dark:text-blue-400 border border-blue-200 dark:border-blue-500/30">
                   Proof ✓
                 </span>
               </div>

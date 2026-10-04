@@ -1654,8 +1654,11 @@ app.post('/api/kyc/submit', async (req, res) => {
     kycDocsStore.unshift(kycObj);
     user.kycStatus = 'pending';
 
+    // Persist before acknowledging. An empty catch here used to let a failed
+    // write return 201 to the user while the submission never reached the
+    // database, so it never appeared in the admin suite.
     try {
-      await db.from('kyc_docs').insert([{
+      const { error: insertErr } = await db.from('kyc_docs').insert([{
         id: kycId,
         user_id: user.uid,
         user_email: user.email,
@@ -1669,8 +1672,14 @@ app.post('/api/kyc/submit', async (req, res) => {
         proof_of_address_url: proofOfAddressUrl || null,
         status: 'pending',
       }]);
+      if (insertErr) throw insertErr;
       await db.from('users').update({ kyc_status: 'pending' }).eq('uid', user.uid);
-    } catch {}
+    } catch (err) {
+      console.error('[kyc] submit failed to persist', err);
+      return res.status(500).json({
+        error: 'We could not save your documents. Please try again.',
+      });
+    }
 
     return res.status(201).json({ message: 'KYC documents submitted for review.', kycId });
   } catch (err) {
@@ -2342,42 +2351,77 @@ app.put('/api/admin/kyc/:id/action', requireAdmin, async (req, res) => {
     const { action, notes } = req.body;
 
     const newStatus = action === 'approve' ? 'approved' : 'rejected';
-    const kyc = kycDocsStore.find((k) => k.id === id);
-    if (kyc) {
-      kyc.status = newStatus;
-      kyc.adminNotes = notes || undefined;
-      kyc.reviewedAt = new Date().toISOString();
-    }
 
-    if (kyc && action === 'approve') {
-      const user = usersStore.find((u) => u.uid === kyc.userId);
-      if (user) {
-        user.kycTier = Math.min((user.kycTier || 0) + 1, 3);
-        user.kycStatus = user.kycTier >= 2 ? 'verified_tier2' : 'verified_tier1';
-        user.isVerified = true;
-      }
+    // The database is the source of truth. kycDocsStore/usersStore are
+    // in-memory only and reset whenever the process recycles, so resolving
+    // either from memory meant an approval silently failed to raise the
+    // applicant's tier.
+    let kycRow: any = null;
+    try {
+      const { data } = await db.from('kyc_docs').select('*').eq('id', id).maybeSingle();
+      if (data) kycRow = data;
+    } catch (err) {
+      console.error('[kyc] doc lookup failed', err);
+    }
+    if (!kycRow) kycRow = kycDocsStore.find((k) => k.id === id) || null;
+    if (!kycRow) return res.status(404).json({ error: 'KYC document not found' });
+
+    const inMemory = kycDocsStore.find((k) => k.id === id);
+    if (inMemory) {
+      inMemory.status = newStatus;
+      inMemory.adminNotes = notes || undefined;
+      inMemory.reviewedAt = new Date().toISOString();
     }
 
     try {
-      await db.from('kyc_docs').update({
-        status: newStatus,
-        admin_notes: notes || null,
-        reviewed_at: new Date().toISOString(),
-      }).eq('id', id);
+      const { error: docErr } = await db
+        .from('kyc_docs')
+        .update({
+          status: newStatus,
+          admin_notes: notes || null,
+          reviewed_at: new Date().toISOString(),
+        })
+        .eq('id', id);
+      if (docErr) throw docErr;
 
-      if (kyc && action === 'approve') {
-        const user = usersStore.find((u) => u.uid === kyc.userId);
-        if (user) {
-          await db.from('users').update({
-            kyc_tier: user.kycTier,
-            kyc_status: user.kycStatus,
-            is_verified: true,
-          }).eq('uid', user.uid);
+      if (action === 'approve') {
+        // Read the current tier from the database, then write tier + 1 back,
+        // so the limit holds for applicants at any starting tier.
+        const { data: urow } = await db
+          .from('users')
+          .select('uid,kyc_tier')
+          .eq('uid', kycRow.user_id)
+          .maybeSingle();
+
+        const nextTier = Math.min((urow ? Number(urow.kyc_tier) || 0 : 0) + 1, 3);
+        const nextStatus = nextTier >= 2 ? 'verified_tier2' : 'verified_tier1';
+
+        const { error: userErr } = await db
+          .from('users')
+          .update({ kyc_tier: nextTier, kyc_status: nextStatus, is_verified: true })
+          .eq('uid', kycRow.user_id);
+        if (userErr) throw userErr;
+
+        const memUser = usersStore.find((u) => u.uid === kycRow.user_id);
+        if (memUser) {
+          memUser.kycTier = nextTier;
+          memUser.kycStatus = nextStatus;
+          memUser.isVerified = true;
         }
-      }
-    } catch {}
 
-    return res.json({ message: `KYC ${action}d successfully` });
+        return res.json({
+          message: 'KYC approved successfully',
+          kycTier: nextTier,
+          kycStatus: nextStatus,
+          userId: kycRow.user_id,
+        });
+      }
+
+      return res.json({ message: 'KYC rejected successfully' });
+    } catch (err) {
+      console.error('[kyc] action failed', err);
+      return res.status(500).json({ error: 'Could not save the KYC decision. Please retry.' });
+    }
   } catch (err) {
     return res.status(500).json({ error: 'Internal server error' });
   }
