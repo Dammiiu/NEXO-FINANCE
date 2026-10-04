@@ -295,6 +295,9 @@ const rowToTx = (r: any) => ({
   cryptoAmount: r.crypto_amount ? parseFloat(r.crypto_amount) : undefined,
   txHash: r.tx_hash,
   destinationAddress: r.destination_address,
+  // For PayPal payouts the deliverable account is stored in the destination
+  // column, since the table has no dedicated paypal column.
+  paypalEmail: r.method === 'paypal' ? r.destination_address : undefined,
   status: r.status,
   details: r.details,
   adminReason: r.admin_reason,
@@ -1041,9 +1044,22 @@ app.post('/api/transactions/withdraw', async (req, res) => {
       return res.status(403).json({ error: 'You must complete a qualifying deposit of at least $500 before withdrawals are enabled.' });
     }
 
-    const { amount, coin, destinationAddress, networkFee } = req.body;
-    if (!amount || !coin || !destinationAddress) {
-      return res.status(400).json({ error: 'Amount, coin, and destination address are required' });
+    const { amount, coin, destinationAddress, networkFee, method, paypalEmail, paypalAccountType } = req.body;
+    const payoutMethod = ['crypto', 'bank', 'paypal'].includes(String(method)) ? String(method) : 'crypto';
+    const paypalTarget = payoutMethod === 'paypal' ? String(paypalEmail || '').trim() : '';
+
+    if (!amount || !coin) {
+      return res.status(400).json({ error: 'Amount and coin are required' });
+    }
+
+    // PayPal payouts deliver to the PayPal address, so a separate destination
+    // address is neither required nor expected. Every other method needs one.
+    if (payoutMethod === 'paypal') {
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(paypalTarget)) {
+        return res.status(400).json({ error: 'A valid PayPal email address is required.' });
+      }
+    } else if (!destinationAddress) {
+      return res.status(400).json({ error: 'A destination address is required for this payout method.' });
     }
 
     const withdrawalAmount = parseFloat(amount);
@@ -1051,19 +1067,32 @@ app.post('/api/transactions/withdraw', async (req, res) => {
       return res.status(400).json({ error: 'Insufficient balance for this withdrawal.' });
     }
 
+    const summary =
+      payoutMethod === 'paypal'
+        ? 'PayPal payout of $' +
+          withdrawalAmount.toLocaleString() +
+          ' to ' +
+          paypalTarget +
+          ' (' +
+          (paypalAccountType || 'personal') +
+          ' account)'
+        : 'Withdrawal of $' + withdrawalAmount.toLocaleString() + ' to ' + String(destinationAddress).substring(0, 12) + '...';
+
     const txId = genId('tx_wdl');
     const newTx = {
       id: txId,
       userId: user.uid,
       userEmail: user.email,
       type: 'withdrawal',
-      method: 'crypto',
+      method: payoutMethod,
       amount: withdrawalAmount,
       coin,
-      destinationAddress,
+      destinationAddress: payoutMethod === 'paypal' ? paypalTarget : destinationAddress,
       networkFee: networkFee || undefined,
       status: 'pending',
-      details: `Withdrawal of $${withdrawalAmount.toLocaleString()} to ${destinationAddress.substring(0, 12)}...`,
+      details: summary,
+      paypalEmail: payoutMethod === 'paypal' ? String(paypalEmail || '').trim() : undefined,
+      paypalAccountType: payoutMethod === 'paypal' ? paypalAccountType || 'personal' : undefined,
       createdAt: new Date().toISOString(),
     };
 
@@ -1075,17 +1104,24 @@ app.post('/api/transactions/withdraw', async (req, res) => {
         user_id: user.uid,
         user_email: user.email,
         type: 'withdrawal',
-        method: 'crypto',
+        method: payoutMethod,
         amount: withdrawalAmount,
         coin,
-        destination_address: destinationAddress,
+        destination_address: payoutMethod === 'paypal' ? paypalTarget : destinationAddress,
         network_fee: networkFee || null,
         status: 'pending',
         details: newTx.details,
       }]);
-    } catch {}
+    } catch (err) {
+      console.error('[withdraw] persist failed', err);
+      return res.status(500).json({ error: 'Could not submit the withdrawal. Please try again.' });
+    }
 
-    return res.status(201).json({ message: 'Withdrawal request submitted and is pending admin review.', txId });
+    return res.status(201).json({
+      message: 'Withdrawal request submitted and is pending admin review.',
+      txId,
+      method: payoutMethod,
+    });
   } catch (err) {
     return res.status(500).json({ error: 'Internal server error' });
   }
@@ -2287,42 +2323,89 @@ app.put('/api/admin/transactions/:id/action', requireAdmin, async (req, res) => 
     const { action, reason } = req.body;
 
     const newStatus = action === 'approve' ? 'approved' : action === 'reject' ? 'rejected' : 'pending';
-    const tx = transactionsStore.find((t) => t.id === id);
-    if (tx) {
-      tx.status = newStatus;
-      tx.adminReason = reason || undefined;
-    }
 
-    // Apply deposit/withdrawal balance updates
-    if (tx && action === 'approve') {
-      const user = usersStore.find((u) => u.uid === tx.userId);
-      if (user && tx.type === 'deposit') {
-        user.balance = (user.balance || 0) + parseFloat(tx.amount);
-        user.totalDeposited = (user.totalDeposited || 0) + parseFloat(tx.amount);
-        if (user.totalDeposited >= 500) user.hasDepositedMinimum = true;
-      }
-      if (user && tx.type === 'withdrawal') {
-        user.balance = Math.max(0, (user.balance || 0) - parseFloat(tx.amount));
-        user.totalWithdrawn = (user.totalWithdrawn || 0) + parseFloat(tx.amount);
-      }
+    // Same defect as the KYC reviewer: the record was resolved from
+    // transactionsStore/usersStore, which are process-local. Approving a
+    // deposit or withdrawal after a restart changed the row status but never
+    // moved the user's balance. Resolve from the database.
+    let tx: any = null;
+    try {
+      const { data } = await db.from('transactions').select('*').eq('id', id).maybeSingle();
+      if (data) tx = data;
+    } catch (err) {
+      console.error('[txn] lookup failed', err);
+    }
+    if (!tx) tx = transactionsStore.find((t) => t.id === id) || null;
+    if (!tx) return res.status(404).json({ error: 'Transaction not found' });
+
+    const inMemory = transactionsStore.find((t) => t.id === id);
+    if (inMemory) {
+      inMemory.status = newStatus;
+      inMemory.adminReason = reason || undefined;
     }
 
     try {
-      await db.from('transactions').update({ status: newStatus, admin_reason: reason || null }).eq('id', id);
-      if (tx && action === 'approve') {
-        const user = usersStore.find((u) => u.uid === tx.userId);
-        if (user) {
-          await db.from('users').update({
-            balance: user.balance,
-            total_deposited: user.totalDeposited,
-            total_withdrawn: user.totalWithdrawn,
-            has_deposited_minimum: user.hasDepositedMinimum,
-          }).eq('uid', user.uid);
-        }
-      }
-    } catch {}
+      const { error: txErr } = await db
+        .from('transactions')
+        .update({ status: newStatus, admin_reason: reason || null })
+        .eq('id', id);
+      if (txErr) throw txErr;
 
-    return res.json({ message: `Transaction ${action}d successfully` });
+      if (action === 'approve' && (tx.type === 'deposit' || tx.type === 'withdrawal')) {
+        const { data: urow } = await db
+          .from('users')
+          .select('uid,balance,total_deposited,total_withdrawn')
+          .eq('uid', tx.user_id)
+          .maybeSingle();
+
+        if (!urow) throw new Error('No user row for ' + tx.user_id);
+
+        const amount = parseFloat(tx.amount) || 0;
+        let balance = Number(urow.balance) || 0;
+        let totalDeposited = Number(urow.total_deposited) || 0;
+        let totalWithdrawn = Number(urow.total_withdrawn) || 0;
+        let hasDepositedMinimum = false;
+
+        if (tx.type === 'deposit') {
+          balance += amount;
+          totalDeposited += amount;
+          hasDepositedMinimum = totalDeposited >= 500;
+        } else {
+          balance = Math.max(0, balance - amount);
+          totalWithdrawn += amount;
+        }
+
+        const { error: userErr } = await db
+          .from('users')
+          .update({
+            balance,
+            total_deposited: totalDeposited,
+            total_withdrawn: totalWithdrawn,
+            has_deposited_minimum: hasDepositedMinimum,
+          })
+          .eq('uid', tx.user_id);
+        if (userErr) throw userErr;
+
+        const memUser = usersStore.find((u) => u.uid === tx.user_id);
+        if (memUser) {
+          memUser.balance = balance;
+          memUser.totalDeposited = totalDeposited;
+          memUser.totalWithdrawn = totalWithdrawn;
+          memUser.hasDepositedMinimum = hasDepositedMinimum;
+        }
+
+        return res.json({
+          message: 'Transaction ' + action + 'd successfully',
+          status: newStatus,
+          balance,
+        });
+      }
+
+      return res.json({ message: 'Transaction ' + action + 'd successfully', status: newStatus });
+    } catch (err) {
+      console.error('[txn] action failed', err);
+      return res.status(500).json({ error: 'Could not save the transaction decision. Please retry.' });
+    }
   } catch (err) {
     return res.status(500).json({ error: 'Internal server error' });
   }

@@ -48,6 +48,75 @@ interface AdminPanelProps {
   onRefreshData?: () => void;
 }
 
+// ─── KYC document viewer ───────────────────────────────────────────────────────
+// Applicants upload base64 data URLs, so the thumbnails render straight from the
+// stored value with no object storage. Clicking one opens it full size.
+const KycDocumentViewer: React.FC<{ doc: KYCDocument }> = ({ doc }) => {
+  const [open, setOpen] = useState<string | null>(null);
+
+  const all: { label: string; url?: string }[] = [
+    { label: 'Front', url: doc.frontImageUrl },
+    { label: 'Back', url: doc.backImageUrl },
+    { label: 'Selfie', url: doc.selfieUrl },
+    { label: 'Address', url: doc.proofOfAddressUrl },
+  ];
+  const items: { label: string; url: string }[] = [];
+  for (const i of all) {
+    if (typeof i.url === 'string' && i.url.length > 0) {
+      items.push({ label: i.label, url: i.url });
+    }
+  }
+
+  if (items.length === 0) {
+    return <span className="text-[10px] text-gray-500">None attached</span>;
+  }
+
+  return (
+    <>
+      <div className="flex flex-wrap gap-1.5">
+        {items.map((item) => (
+          <button
+            key={item.label}
+            type="button"
+            title={`View ${item.label.toLowerCase()} document`}
+            onClick={() => setOpen(item.url)}
+            className="group relative w-12 h-12 rounded-lg overflow-hidden border border-gray-700 bg-gray-900 hover:border-[#00FFB2] transition"
+          >
+            <img
+              src={item.url}
+              alt={`${item.label} document`}
+              className="w-full h-full object-cover"
+            />
+            <span className="absolute inset-x-0 bottom-0 bg-black/75 text-[8px] font-black uppercase text-white py-0.5 text-center">
+              {item.label}
+            </span>
+          </button>
+        ))}
+      </div>
+
+      {open && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/90 backdrop-blur-sm"
+          onClick={() => setOpen(null)}
+        >
+          <img
+            src={open}
+            alt="KYC document"
+            className="max-w-full max-h-full rounded-xl object-contain"
+          />
+          <button
+            type="button"
+            onClick={() => setOpen(null)}
+            className="absolute top-5 right-5 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white text-xs font-bold transition"
+          >
+            Close
+          </button>
+        </div>
+      )}
+    </>
+  );
+};
+
 export const AdminPanel: React.FC<AdminPanelProps> = ({
   currentUser,
   authToken,
@@ -1471,6 +1540,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   <th className="p-3.5">ID Number</th>
                   <th className="p-3.5">Country</th>
                   <th className="p-3.5">Status</th>
+                  <th className="p-3.5">Documents</th>
                   <th className="p-3.5 text-right">Audit Actions</th>
                 </tr>
               </thead>
@@ -1496,6 +1566,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                       >
                         {doc.status}
                       </span>
+                    </td>
+                    <td className="p-3.5">
+                      <KycDocumentViewer doc={doc} />
                     </td>
                     <td className="p-3.5 text-right">
                       {doc.status === 'pending' && (

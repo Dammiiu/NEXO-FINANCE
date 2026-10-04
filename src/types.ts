@@ -105,7 +105,7 @@ export interface KYCDocument {
   userEmail: string;
   fullName: string;
   country: string;
-  docType: 'passport' | 'id_card' | 'drivers_license';
+  docType: 'passport' | 'id_card' | 'drivers_license' | 'national_id' | 'residence_permit' | 'other' | string;
   idNumber: string;
   frontImageUrl?: string;
   backImageUrl?: string;

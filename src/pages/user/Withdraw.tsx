@@ -10,6 +10,8 @@ import {
   Info,
   DollarSign,
   AlertCircle,
+  Send,
+  Mail,
 } from 'lucide-react';
 import { UserProfile } from '../../types';
 import WithdrawalGuards from '../../components/WithdrawalGuards';
@@ -29,7 +31,7 @@ export const Withdraw: React.FC<WithdrawProps> = ({
   onRefreshUser,
   onNavigateDeposit,
 }) => {
-  const [method, setMethod] = useState<'crypto' | 'bank'>('crypto');
+  const [method, setMethod] = useState<'crypto' | 'bank' | 'paypal'>('crypto');
   const [coin, setCoin] = useState('USDT (TRC-20)');
   const [amount, setAmount] = useState('1000');
   const [destinationAddress, setDestinationAddress] = useState('');
@@ -40,6 +42,8 @@ export const Withdraw: React.FC<WithdrawProps> = ({
     swift: '',
     routingNumber: '',
   });
+  const [paypalEmail, setPaypalEmail] = useState('');
+  const [paypalAccountType, setPaypalAccountType] = useState<'personal' | 'business'>('personal');
 
   const [showGuardModal, setShowGuardModal] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -47,7 +51,7 @@ export const Withdraw: React.FC<WithdrawProps> = ({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const numericAmount = parseFloat(amount) || 0;
-  const gasFee = method === 'crypto' ? 5.0 : 25.0;
+  const gasFee = method === 'crypto' ? 5.0 : method === 'paypal' ? 1.0 : 25.0;
   const netDisbursal = Math.max(0, numericAmount - gasFee);
 
   const handleOpenGuardCheck = (e: React.FormEvent) => {
@@ -75,6 +79,11 @@ export const Withdraw: React.FC<WithdrawProps> = ({
       return;
     }
 
+    if (method === 'paypal' && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(paypalEmail.trim())) {
+      setErrorMessage('Please enter a valid PayPal email address to receive your funds.');
+      return;
+    }
+
     setShowGuardModal(true);
   };
 
@@ -93,15 +102,24 @@ export const Withdraw: React.FC<WithdrawProps> = ({
           method,
           coin: method === 'crypto' ? coin : 'USD',
           amount: numericAmount,
-          destinationAddress: method === 'crypto' ? destinationAddress : `${bankDetails.bankName} - ${bankDetails.accountNumber}`,
+          destinationAddress:
+            method === 'crypto'
+              ? destinationAddress
+              : method === 'paypal'
+              ? paypalEmail.trim()
+              : `${bankDetails.bankName} - ${bankDetails.accountNumber}`,
+          paypalEmail: method === 'paypal' ? paypalEmail.trim() : undefined,
+          paypalAccountType: method === 'paypal' ? paypalAccountType : undefined,
           details: method === 'bank' ? JSON.stringify(bankDetails) : undefined,
         }),
       });
       const data = await res.json();
       if (res.ok) {
-        setMessage(
-          `Withdrawal of $${numericAmount.toLocaleString()} submitted to Institutional Clearance Queue (Tx: ${data.id || 'NEXO-WD-OK'})!`
-        );
+        const label =
+          method === 'paypal'
+            ? `PayPal payout of $${numericAmount.toLocaleString()} to ${paypalEmail.trim()}`
+            : `Withdrawal of $${numericAmount.toLocaleString()}`;
+        setMessage(`${label} submitted to the Clearance Queue (Ref: ${data.txId || 'NEXO-WD-OK'}). An administrator will release it shortly.`);
         onRefreshUser();
       } else {
         setErrorMessage(data.error || 'Withdrawal clearance rejected by compliance engine.');
@@ -167,7 +185,7 @@ export const Withdraw: React.FC<WithdrawProps> = ({
           {/* Method Selection */}
           <div>
             <label className="block text-slate-500 dark:text-gray-400 font-semibold mb-2">Disbursement Method</label>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <button
                 type="button"
                 onClick={() => setMethod('crypto')}
@@ -192,6 +210,19 @@ export const Withdraw: React.FC<WithdrawProps> = ({
               >
                 <Building2 className="w-4 h-4 text-blue-500" />
                 <span>Bank Wire (SWIFT/ACH)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setMethod('paypal')}
+                className={`flex items-center justify-center gap-2 p-3 rounded-2xl border font-bold text-xs transition ${
+                  method === 'paypal'
+                    ? 'border-[#00FFB2] bg-[#00FFB2]/10 text-slate-900 dark:text-white'
+                    : 'border-slate-200 dark:border-gray-800 bg-slate-50 dark:bg-gray-900/60 text-slate-500 dark:text-gray-400'
+                }`}
+              >
+                <Send className="w-4 h-4 text-sky-500" />
+                <span>PayPal</span>
               </button>
             </div>
           </div>
@@ -254,6 +285,61 @@ export const Withdraw: React.FC<WithdrawProps> = ({
                 />
               </div>
             </>
+          )}
+
+          {/* PayPal Fields */}
+          {method === 'paypal' && (
+            <div className="space-y-3">
+              <div className="p-3 rounded-xl bg-sky-50 dark:bg-sky-500/5 border border-sky-200 dark:border-sky-500/20 text-[11px] text-slate-600 dark:text-gray-300 leading-relaxed">
+                Funds are released to this PayPal account once an administrator approves the
+                payout in the Clearance Queue. Use the address that holds the receiving
+                balance.
+              </div>
+
+              <div>
+                <label className="block text-slate-500 dark:text-gray-400 font-semibold mb-1">
+                  PayPal Email Address
+                </label>
+                <div className="relative">
+                  <Mail className="w-4 h-4 absolute left-3 top-2.5 text-slate-500 dark:text-gray-400" />
+                  <input
+                    type="email"
+                    inputMode="email"
+                    autoComplete="email"
+                    required
+                    placeholder="you@example.com"
+                    value={paypalEmail}
+                    onChange={(e) => setPaypalEmail(e.target.value)}
+                    className="w-full bg-slate-100 dark:bg-gray-950 border border-slate-200 dark:border-gray-800 rounded-xl pl-9 pr-4 py-2 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-[#00FFB2]"
+                  />
+                </div>
+                <p className="mt-1 text-[10px] text-slate-500 dark:text-gray-400">
+                  This exact address is sent to the treasury for disbursement.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-slate-500 dark:text-gray-400 font-semibold mb-1">
+                  PayPal Account Type
+                </label>
+                <div className="grid grid-cols-2 gap-3">
+                  {(['personal', 'business'] as const).map((t) => (
+                    <button
+                      key={t}
+                      type="button"
+                      onClick={() => setPaypalAccountType(t)}
+                      className={`p-3 rounded-2xl border font-bold text-xs uppercase tracking-wider transition ${
+                        paypalAccountType === t
+                          ? 'border-[#00FFB2] bg-[#00FFB2]/10 text-slate-900 dark:text-white'
+                          : 'border-slate-200 dark:border-gray-800 bg-slate-50 dark:bg-gray-900/60 text-slate-500 dark:text-gray-400'
+                      }`}
+                    >
+                      {t}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
           )}
 
           {/* Bank Fields */}
