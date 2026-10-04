@@ -9,8 +9,20 @@ const app = express();
 const PORT = Number(process.env.PORT) || 3000;
 
 // ── Supabase Client ───────────────────────────────────────────────────────────
+// The service-role key grants full read/write access to the database, so it is
+// read from the environment only. A previous version had the live key committed
+// as a fallback, which exposed the whole database to anyone with repo access.
+// Refuse to boot rather than silently running without persistence.
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://edpbhfxkflgtqgygjfyg.supabase.co';
-const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || 'sb_secret_P9S0aFJQY2m_jOi0mRreMA_xy0j9Tuv';
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
+
+if (!SUPABASE_SERVICE_KEY) {
+  console.error(
+    'FATAL: SUPABASE_SERVICE_KEY is not set. The API cannot reach the database without it.'
+  );
+  process.exit(1);
+}
+
 const db = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, {
   auth: { persistSession: false },
 });
