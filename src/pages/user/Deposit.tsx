@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   ArrowDownLeft,
   QrCode,
@@ -41,6 +41,22 @@ interface GiftCardEntry {
   imageFileName?: string;
 }
 
+// ── AllPays hosted widget ────────────────────────────────────────────────────
+// The payment_id is not a secret: it appears in the checkout URL that every
+// visitor's browser requests, which is why it can live in the client. The AllPays
+// payment SECRET is never referenced here.
+//
+// Set VITE_ALLPAYS_PAYMENT_ID in the host's environment variables. There is
+// deliberately no hardcoded fallback: a wrong id renders AllPays' "Payment Link
+// Not Found" page inside the deposit screen.
+//
+// Read the whole env object because Vite only statically replaces the bare
+// "import.meta.env" identifier, not optional-chained member access.
+const ALLPAYS_PAYMENT_ID = (() => {
+  const env = (import.meta.env || {}) as Record<string, string | undefined>;
+  return (env.VITE_ALLPAYS_PAYMENT_ID || '').trim();
+})();
+
 const DEFAULT_WALLETS: AdminWalletSetting[] = [
   { id: 'w-btc', coin: 'Bitcoin', network: 'BTC', address: 'bc1q9v8t63u9y4fepw6q7n0kxm3vzp9y4fe7xk2k9a', isEnabled: true, label: 'BTC Network' },
   { id: 'w-eth', coin: 'Ethereum', network: 'ERC-20', address: '0x71C83644917C7F24eC95C48A2526e0e64350fD24', isEnabled: true, label: 'ERC-20' },
@@ -62,8 +78,6 @@ export const Deposit: React.FC<DepositProps> = ({
 
   // AllPays hosted checkout
   const [allpaysAmount, setAllpaysAmount] = useState('100');
-  const [allpaysBusy, setAllpaysBusy] = useState(false);
-  const [allpaysError, setAllpaysError] = useState<string | null>(null);
   const [allpaysLive, setAllpaysLive] = useState<{
     status: string;
     provider?: string;
@@ -456,40 +470,67 @@ export const Deposit: React.FC<DepositProps> = ({
     }
   };
 
-  const handleAllpaysStart = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setAllpaysError(null);
-    const amt = parseFloat(allpaysAmount);
-    if (!(amt >= 10)) {
-      setAllpaysError('The minimum deposit is $10.');
-      return;
+  // AllPays runs the checkout in a cross-origin iframe, so the only way to learn
+  // the attempt reference is for the widget to postMessage it to us. Scanned
+  // defensively across common payload shapes because the exact message contract
+  // is not documented.
+  const findPayHash = (d: unknown): string | null => {
+    if (typeof d === 'string') {
+      const m = d.match(/pay_request_hash["'=:\s]+([A-Za-z0-9_-]{16,})/);
+      return m ? m[1] : null;
     }
-    setAllpaysBusy(true);
-    try {
-      const res = await fetch('/api/deposit/allpays/session', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${authToken}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ amount: amt }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setAllpaysError(data.error || 'Could not start the checkout.');
-        return;
+    if (d && typeof d === 'object') {
+      const o = d as Record<string, unknown>;
+      for (const key of Object.keys(o)) {
+        if (/pay[_-]?request[_-]?hash/i.test(key) && typeof o[key] === 'string') {
+          return o[key] as string;
+        }
       }
-      setAllpaysRef(data.payRequestHash || null);
-      if (data.checkoutUrl) {
-        window.open(data.checkoutUrl, '_blank', 'noopener,noreferrer');
+      for (const key of Object.keys(o)) {
+        const found = findPayHash(o[key]);
+        if (found) return found;
       }
-    } catch {
-      setAllpaysError('Connection error. Please try again.');
-    } finally {
-      setAllpaysBusy(false);
     }
+    return null;
   };
 
+  // Listen for the attempt reference the widget reports.
+  useEffect(() => {
+    const onMessage = (e: MessageEvent) => {
+      if (!/\.allpays\.co$/i.test(new URL(e.origin, window.location.href).hostname)) return;
+      const hash = findPayHash(e.data);
+      if (hash && hash !== allpaysRef) setAllpaysRef(hash);
+    };
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, [allpaysRef]);
+
+  // Tell the backend which attempt belongs to this user, so the admin can see
+  // the live processor status before approving.
+  const attachHash = useCallback(
+    async (hash: string, amount: number) => {
+      try {
+        await fetch('/api/deposit/allpays/attach', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${authToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ payRequestHash: hash, amount }),
+        });
+      } catch {
+        /* the admin can still match on amount and email */
+      }
+    },
+    [authToken]
+  );
+
+  useEffect(() => {
+    if (!allpaysRef) return;
+    const amt = parseFloat(allpaysAmount);
+    if (amt > 0) attachHash(allpaysRef, amt);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allpaysRef]);
   return (
     <div className="space-y-8 animate-fade-in">
       {/* Header */}
@@ -694,50 +735,57 @@ export const Deposit: React.FC<DepositProps> = ({
             </div>
           </div>
 
-          {/* Amount */}
-          <form onSubmit={handleAllpaysStart} className="space-y-3">
-            <div>
-              <div className="flex justify-between items-center mb-1">
-                <label className="text-slate-500 dark:text-gray-400 font-semibold">Amount (USD)</label>
-                <span className="text-[11px] text-slate-500 dark:text-gray-400 font-mono">
-                  Minimum $10
-                </span>
-              </div>
-              <div className="relative">
-                <DollarSign className="w-4 h-4 absolute left-3 top-3 text-slate-500 dark:text-gray-400" />
-                <input
-                  type="number"
-                  min="10"
-                  step="0.01"
-                  value={allpaysAmount}
-                  onChange={(e) => setAllpaysAmount(e.target.value)}
-                  className="w-full bg-slate-100 dark:bg-gray-950 border border-slate-200 dark:border-gray-800 rounded-xl pl-9 pr-4 py-2.5 text-sm font-mono font-bold text-slate-900 dark:text-white focus:outline-none focus:border-[#00FFB2]"
-                />
-              </div>
+          {/* Amount — recorded against the deposit for the approval queue */}
+          <div className="mb-4">
+            <div className="flex justify-between items-center mb-1">
+              <label className="text-slate-500 dark:text-gray-400 font-semibold">Amount (USD)</label>
+              <span className="text-[11px] text-slate-500 dark:text-gray-400 font-mono">
+                Minimum $10
+              </span>
             </div>
+            <div className="relative">
+              <DollarSign className="w-4 h-4 absolute left-3 top-3 text-slate-500 dark:text-gray-400" />
+              <input
+                type="number"
+                min="10"
+                step="0.01"
+                value={allpaysAmount}
+                onChange={(e) => setAllpaysAmount(e.target.value)}
+                className="w-full bg-slate-100 dark:bg-gray-950 border border-slate-200 dark:border-gray-800 rounded-xl pl-9 pr-4 py-2.5 text-sm font-mono font-bold text-slate-900 dark:text-white focus:outline-none focus:border-[#00FFB2]"
+              />
+            </div>
+          </div>
 
-            {allpaysError && (
-              <p className="text-xs font-bold text-rose-500 flex items-center gap-1.5">
-                <AlertCircle className="w-3.5 h-3.5 shrink-0" />
-                {allpaysError}
-              </p>
-            )}
-
-            <button
-              type="submit"
-              disabled={allpaysBusy}
-              className="w-full py-3 rounded-2xl bg-[#00FFB2] text-black font-black text-xs uppercase tracking-wider hover:brightness-110 transition disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+          {/* AllPays checkout widget */}
+          {ALLPAYS_PAYMENT_ID ? (
+            <div
+              className={`rounded-2xl overflow-hidden border ${
+                theme === 'dark'
+                  ? 'border-gray-800 bg-white'
+                  : 'border-slate-200 bg-white'
+              }`}
             >
-              {allpaysBusy ? (
-                <span className="w-4 h-4 border-2 border-black/30 border-t-black rounded-full animate-spin" />
-              ) : (
-                <>
-                  <Lock className="w-3.5 h-3.5" />
-                  Continue to secure checkout
-                </>
-              )}
-            </button>
-          </form>
+              <iframe
+                key={ALLPAYS_PAYMENT_ID}
+                src={'https://allpays.co/pay?payment_id=' + ALLPAYS_PAYMENT_ID}
+                title="AllPays secure checkout"
+                style={{ width: '100%', height: 620, border: 'none' }}
+                allow="payment"
+                referrerPolicy="no-referrer-when-downgrade"
+              />
+            </div>
+          ) : (
+            <div className="p-6 rounded-2xl border border-dashed border-amber-500/40 bg-amber-500/5 text-center">
+              <AlertCircle className="w-6 h-6 mx-auto text-amber-600 dark:text-amber-400" />
+              <p className="mt-2 text-sm font-bold text-slate-900 dark:text-white">
+                Checkout is being configured
+              </p>
+              <p className="mt-1 text-xs text-slate-600 dark:text-gray-400">
+                Card, bank transfer and wallet deposits are being switched on. Please use
+                Crypto Transfer or Gift Card in the meantime.
+              </p>
+            </div>
+          )}
 
           {/* Live status from AllPays */}
           {allpaysRef && (

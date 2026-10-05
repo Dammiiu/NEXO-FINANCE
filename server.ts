@@ -1258,6 +1258,63 @@ app.post('/api/deposit/allpays/session', async (req, res) => {
   }
 });
 
+// The widget embed reports its attempt reference to the page via postMessage.
+// Persist it against a pending deposit so the admin can see the real processor
+// status before approving. Idempotent: re-posting the same hash is harmless.
+app.post('/api/deposit/allpays/attach', async (req, res) => {
+  try {
+    const user = await getAuthUser(req);
+    if (!user) return res.status(401).json({ error: 'Unauthorized' });
+
+    const hash = String((req.body && req.body.payRequestHash) || '').trim();
+    if (!/^[A-Za-z0-9_-]{16,}$/.test(hash)) {
+      return res.status(400).json({ error: 'Invalid payment reference.' });
+    }
+
+    const amount = parseFloat(String(req.body && req.body.amount));
+
+    // Already recorded for this user?
+    const { data: existing } = await db
+      .from('transactions')
+      .select('id')
+      .eq('user_id', user.uid)
+      .eq('method', 'allpays')
+      .eq('tx_hash', hash)
+      .maybeSingle();
+    if (existing && existing.id) return res.json({ ok: true, txId: existing.id, existing: true });
+
+    const txId = genId('tx_pay');
+    const detail =
+      'AllPays deposit of $' + (amount > 0 ? amount.toLocaleString() : '?') + ' by ' + user.email;
+
+    const row = {
+      id: txId,
+      user_id: user.uid,
+      user_email: user.email,
+      type: 'deposit',
+      method: 'allpays',
+      amount: amount > 0 ? amount : 0,
+      coin: 'USD',
+      tx_hash: hash,
+      status: 'pending',
+      details: detail,
+    };
+    transactionsStore.unshift(row);
+
+    try {
+      const { error: insErr } = await db.from('transactions').insert([row]);
+      if (insErr) throw insErr;
+    } catch (err) {
+      console.error('[allpays] attach failed', err);
+    }
+
+    return res.status(201).json({ ok: true, txId });
+  } catch (err) {
+    console.error('[allpays] attach error', err);
+    return res.status(500).json({ error: 'Could not record the payment.' });
+  }
+});
+
 // Report the live status of the caller's most recent AllPays deposit. The
 // transaction stays 'pending' until an administrator approves it, so a captured
 // payment is never auto-credited.
