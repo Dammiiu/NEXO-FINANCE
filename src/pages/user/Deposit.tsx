@@ -41,24 +41,6 @@ interface GiftCardEntry {
   imageFileName?: string;
 }
 
-// ── AllPays hosted checkout ───────────────────────────────────────────────────
-// Only the payment_id is used, and it is not a secret: it appears in the
-// iframe URL that every visitor's browser requests. The AllPays payment SECRET
-// is never referenced here — it belongs on the server at most, and in practice
-// only in the AllPays dashboard.
-//
-// Set VITE_ALLPAYS_PAYMENT_ID in the host's environment variables. There is
-// deliberately no hardcoded fallback: a guessed id renders AllPays' "Payment
-// Link Not Found" page inside our deposit screen, so until the real value is
-// configured the panel shows a neutral notice instead.
-//
-// Read the whole env object because Vite only statically replaces the bare
-// "import.meta.env" identifier, not optional-chained member access.
-const ALLPAYS_PAYMENT_ID = (() => {
-  const env = (import.meta.env || {}) as Record<string, string | undefined>;
-  return (env.VITE_ALLPAYS_PAYMENT_ID || '').trim();
-})();
-
 const DEFAULT_WALLETS: AdminWalletSetting[] = [
   { id: 'w-btc', coin: 'Bitcoin', network: 'BTC', address: 'bc1q9v8t63u9y4fepw6q7n0kxm3vzp9y4fe7xk2k9a', isEnabled: true, label: 'BTC Network' },
   { id: 'w-eth', coin: 'Ethereum', network: 'ERC-20', address: '0x71C83644917C7F24eC95C48A2526e0e64350fD24', isEnabled: true, label: 'ERC-20' },
