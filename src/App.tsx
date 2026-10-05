@@ -55,8 +55,54 @@ const INITIAL_ASSETS: Record<string, CryptoAsset> = {
 };
 
 
+// Every user-facing destination, with the icon shown in the desktop and mobile
+// navigation so the two never drift apart.
+const NAV_ITEMS = [
+  { id: 'portfolio', label: 'Portfolio', short: 'Portfolio', icon: Wallet },
+  { id: 'trade', label: 'Trade Desk', short: 'Trade', icon: TrendingUp },
+  { id: 'invest', label: 'Yield Staking', short: 'Invest', icon: Sparkles },
+  { id: 'deposit', label: 'Deposit', short: 'Deposit', icon: ArrowDownLeft },
+  { id: 'withdraw', label: 'Withdraw', short: 'Withdraw', icon: ArrowUpRight },
+  { id: 'kyc', label: 'KYC Vault', short: 'KYC', icon: ShieldCheck },
+  { id: 'transactions', label: 'Ledger', short: 'Ledger', icon: Layers },
+  { id: 'profile', label: 'Account', short: 'Account', icon: User },
+];
+
+const NAV_IDS = NAV_ITEMS.map((n) => n.id);
+
+// Map a URL path onto a tab. Unknown or root paths land on the portfolio.
+const tabFromPath = (path: string): string => {
+  const seg = String(path || '').split('?')[0].split('#')[0].replace(/^\/+|\/+$/g, '');
+  return NAV_IDS.indexOf(seg) > -1 ? seg : 'portfolio';
+};
+
 export const App: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<string>('portfolio');
+  // The active section lives in the URL, so every view is linkable, survives a
+  // refresh and responds to the browser back and forward buttons.
+  const [activeTab, setActiveTab] = useState<string>(() =>
+    typeof window !== 'undefined' ? tabFromPath(window.location.pathname) : 'portfolio'
+  );
+  // Keep the address bar in step with the active section.
+  useEffect(() => {
+    const path = '/' + activeTab;
+    if (window.location.pathname !== path) {
+      window.history.pushState({ tab: activeTab }, '', path);
+    }
+  }, [activeTab]);
+
+  // Back / forward buttons move between sections.
+  useEffect(() => {
+    const onPop = () => setActiveTab(tabFromPath(window.location.pathname));
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
+
+  // Land at the top of a new section rather than wherever the last one was
+  // scrolled to.
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: 'auto' });
+  }, [activeTab]);
+
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
   const [prices, setPrices] = useState<Record<string, CryptoAsset>>(INITIAL_ASSETS);
   const [user, setUser] = useState<UserProfile | null>(() => {
@@ -395,16 +441,8 @@ export const App: React.FC = () => {
               theme === 'dark' ? 'bg-[#121622] border-gray-800' : 'bg-slate-100 border-slate-200'
             }`}
           >
-            {[
-              { id: 'portfolio', label: 'Portfolio' },
-              { id: 'trade', label: 'Trade Desk' },
-              { id: 'invest', label: 'Yield Staking' },
-              { id: 'deposit', label: 'Deposit' },
-              { id: 'withdraw', label: 'Withdraw' },
-              { id: 'kyc', label: 'KYC Vault' },
-              { id: 'transactions', label: 'Ledger' },
-              { id: 'profile', label: 'Account' },
-            ].map((tab) => {
+            {NAV_ITEMS.map((tab) => {
+              const Icon = tab.icon;
               const isActive = activeTab === tab.id && !isAdminOpen;
               return (
                 <button
@@ -413,7 +451,9 @@ export const App: React.FC = () => {
                     setActiveTab(tab.id);
                     setIsAdminOpen(false);
                   }}
-                  className={`px-3.5 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                  aria-current={isActive ? 'page' : undefined}
+                  title={tab.label}
+                  className={`relative flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
                     isActive
                       ? 'bg-[#00FFB2] text-black shadow-md'
                       : theme === 'dark'
@@ -421,7 +461,8 @@ export const App: React.FC = () => {
                       : 'text-slate-600 hover:text-slate-950 hover:bg-white'
                   }`}
                 >
-                  {tab.label}
+                  <Icon className="w-3.5 h-3.5 shrink-0" />
+                  <span>{tab.label}</span>
                 </button>
               );
             })}
@@ -634,12 +675,7 @@ export const App: React.FC = () => {
         }`}
       >
         <div className="grid grid-cols-5 h-16 items-center px-1">
-          {[
-            { id: 'portfolio', label: 'Portfolio', icon: Wallet },
-            { id: 'trade', label: 'Trade', icon: TrendingUp },
-            { id: 'invest', label: 'Invest', icon: Sparkles },
-            { id: 'deposit', label: 'Deposit', icon: ArrowDownLeft },
-          ].map((item) => {
+          {NAV_ITEMS.slice(0, 4).map((item) => {
             const Icon = item.icon;
             const isActive = activeTab === item.id && !isAdminOpen && !isMobileMenuOpen;
             return (
@@ -737,12 +773,14 @@ export const App: React.FC = () => {
 
             {/* Menu Items Grid */}
             <div className="grid grid-cols-2 gap-2.5 mb-5">
-              {[
-                { id: 'withdraw', label: 'Withdrawal Desk', icon: ArrowUpRight, desc: 'Crypto & Bank wire' },
-                { id: 'kyc', label: 'KYC Vault', icon: ShieldCheck, desc: 'Identity verification' },
-                { id: 'transactions', label: 'Ledger', icon: Layers, desc: 'Audit & tx history' },
-                { id: 'profile', label: 'Account Profile', icon: User, desc: 'Security & settings' },
-              ].map((item) => {
+              {NAV_ITEMS.slice(4).map((item) => {
+                const DESCRIPTIONS: Record<string, string> = {
+                  withdraw: 'Cards, PayPal, bank or crypto',
+                  kyc: 'Identity verification',
+                  transactions: 'Audit & tx history',
+                  profile: 'Security & settings',
+                };
+                const desc = DESCRIPTIONS[item.id] || '';
                 const Icon = item.icon;
                 const isActive = activeTab === item.id && !isAdminOpen;
                 return (
@@ -764,7 +802,7 @@ export const App: React.FC = () => {
                     <Icon className="w-5 h-5 mb-2" />
                     <div>
                       <span className="text-xs font-bold block">{item.label}</span>
-                      <span className="text-[10px] text-gray-400 block">{item.desc}</span>
+                      <span className="text-[10px] text-gray-400 block">{desc}</span>
                     </div>
                   </button>
                 );

@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Nexo Finance">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#131A2B"/>
+      <stop offset="1" stop-color="#060911"/>
+    </linearGradient>
+    <linearGradient id="mark" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#5CFFC4"/>
+      <stop offset="0.55" stop-color="#00F0A8"/>
+      <stop offset="1" stop-color="#00B37E"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="0" y="0" width="64" height="64" rx="15" fill="url(#tile)"/>
+  <rect x="0.75" y="0.75" width="62.5" height="62.5" rx="14.4" fill="none" stroke="#2A3550" stroke-width="1.5"/>
+
+  <!-- Geometric N: two uprights joined by a rising diagonal -->
+  <g fill="url(#mark)">
+    <path d="M17 46V18h6.6l17.2 19.6V18H47v28h-6.5L23.2 26.2V46H17Z"/>
+  </g>
+
+  <!-- Ascending bar accent: growth, legible down to 16px -->
+  <g fill="url(#mark)" opacity="0.92">
+    <rect x="17" y="50.5" width="5" height="4" rx="1.6"/>
+    <rect x="25.2" y="50.5" width="5" height="6.4" rx="1.6"/>
+    <rect x="33.4" y="50.5" width="5" height="8.8" rx="1.6"/>
+    <rect x="41.6" y="50.5" width="5" height="11.2" rx="1.6"/>
+  </g>
+</svg>
