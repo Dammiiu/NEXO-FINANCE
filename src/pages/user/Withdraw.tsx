@@ -46,8 +46,16 @@ export const Withdraw: React.FC<WithdrawProps> = ({
   const [paypalAccountType, setPaypalAccountType] = useState<'personal' | 'business'>('personal');
 
   const [showGuardModal, setShowGuardModal] = useState(false);
+  const [showSuccess, setShowSuccess] = useState(false);
+  const [successDetails, setSuccessDetails] = useState({
+    amount: 0,
+    fee: 0,
+    net: 0,
+    method: '',
+    destination: '',
+    reference: '',
+  });
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const numericAmount = parseFloat(amount) || 0;
@@ -56,7 +64,6 @@ export const Withdraw: React.FC<WithdrawProps> = ({
 
   const handleOpenGuardCheck = (e: React.FormEvent) => {
     e.preventDefault();
-    setMessage(null);
     setErrorMessage(null);
 
     if (numericAmount <= 0) {
@@ -115,11 +122,22 @@ export const Withdraw: React.FC<WithdrawProps> = ({
       });
       const data = await res.json();
       if (res.ok) {
-        const label =
+        const destination =
           method === 'paypal'
-            ? `PayPal payout of $${numericAmount.toLocaleString()} to ${paypalEmail.trim()}`
-            : `Withdrawal of $${numericAmount.toLocaleString()}`;
-        setMessage(`${label} submitted to the Clearance Queue (Ref: ${data.txId || 'NEXO-WD-OK'}). An administrator will release it shortly.`);
+            ? paypalEmail.trim()
+            : method === 'crypto'
+            ? destinationAddress
+            : `${bankDetails.bankName} - ${bankDetails.accountNumber}`;
+
+        setSuccessDetails({
+          amount: numericAmount,
+          fee: gasFee,
+          net: netDisbursal,
+          method: method === 'paypal' ? 'PayPal' : method === 'bank' ? 'Bank Wire' : coin,
+          destination,
+          reference: data.txId || 'NEXO-WD-OK',
+        });
+        setShowSuccess(true);
         onRefreshUser();
       } else {
         setErrorMessage(data.error || 'Withdrawal clearance rejected by compliance engine.');
@@ -148,10 +166,84 @@ export const Withdraw: React.FC<WithdrawProps> = ({
       </div>
 
       {/* Notifications */}
-      {message && (
-        <div className="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-bold flex items-center gap-2">
-          <CheckCircle2 className="w-4 h-4 shrink-0" />
-          <span>{message}</span>
+      {/* Success Banner */}
+      {showSuccess && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
+          <div
+            className={`w-full max-w-md rounded-3xl overflow-hidden shadow-2xl border ${
+              theme === 'dark' ? 'bg-[#121622] border-[#00FFB2]/40' : 'bg-white border-slate-200'
+            }`}
+          >
+            <div className="px-6 pt-8 pb-6 text-center">
+              <div className="w-16 h-16 mx-auto rounded-full bg-emerald-500/10 border-2 border-emerald-500/40 flex items-center justify-center">
+                <CheckCircle2 className="w-8 h-8 text-emerald-500" />
+              </div>
+
+              <h3 className="mt-4 text-xl font-black tracking-tight text-slate-900 dark:text-white">
+                Withdrawal Successful
+              </h3>
+
+              <div className="mt-4 font-mono text-4xl font-black text-slate-900 dark:text-white">
+                $
+                {successDetails.net.toLocaleString(undefined, {
+                  minimumFractionDigits: 2,
+                  maximumFractionDigits: 2,
+                })}
+              </div>
+              <p className="mt-1 text-[11px] uppercase tracking-wider text-slate-500 dark:text-gray-400">
+                Sent to {successDetails.method}
+              </p>
+            </div>
+
+            <div
+              className={`px-6 py-4 space-y-2.5 text-xs border-t ${
+                theme === 'dark'
+                  ? 'bg-gray-950/60 border-gray-800 text-gray-400'
+                  : 'bg-slate-50 border-slate-200 text-slate-600'
+              }`}
+            >
+              <div className="flex items-center justify-between gap-4">
+                <span>Amount requested</span>
+                <span className="font-mono font-bold text-slate-900 dark:text-white">
+                  ${successDetails.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-4">
+                <span>Network fee</span>
+                <span className="font-mono font-bold text-slate-900 dark:text-white">
+                  -${successDetails.fee.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </span>
+              </div>
+              <div className="flex items-start justify-between gap-4">
+                <span className="shrink-0">Destination</span>
+                <span className="font-mono font-bold text-right break-all text-slate-900 dark:text-white">
+                  {successDetails.destination}
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-4">
+                <span>Reference</span>
+                <span className="font-mono font-bold text-emerald-500 break-all text-right">
+                  {successDetails.reference}
+                </span>
+              </div>
+            </div>
+
+            <div className="p-5">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowSuccess(false);
+                  setAmount('');
+                  setPaypalEmail('');
+                  setDestinationAddress('');
+                  setErrorMessage(null);
+                }}
+                className="w-full py-3 rounded-2xl bg-[#00FFB2] text-black font-black text-xs uppercase tracking-wider hover:brightness-110 transition"
+              >
+                Done
+              </button>
+            </div>
+          </div>
         </div>
       )}
       {errorMessage && (

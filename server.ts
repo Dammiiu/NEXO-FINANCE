@@ -2366,7 +2366,7 @@ app.put('/api/admin/transactions/:id/action', requireAdmin, async (req, res) => 
       if (action === 'approve' && (tx.type === 'deposit' || tx.type === 'withdrawal')) {
         const { data: urow } = await db
           .from('users')
-          .select('uid,balance,total_deposited,total_withdrawn')
+          .select('uid,balance,total_deposited,total_withdrawn,has_deposited_minimum')
           .eq('uid', tx.user_id)
           .maybeSingle();
 
@@ -2376,7 +2376,9 @@ app.put('/api/admin/transactions/:id/action', requireAdmin, async (req, res) => 
         let balance = Number(urow.balance) || 0;
         let totalDeposited = Number(urow.total_deposited) || 0;
         let totalWithdrawn = Number(urow.total_withdrawn) || 0;
-        let hasDepositedMinimum = false;
+        // Only a deposit can raise this. A withdrawal must leave it untouched,
+        // otherwise approving one would strip the user's withdrawal eligibility.
+        let hasDepositedMinimum = urow.has_deposited_minimum === true;
 
         if (tx.type === 'deposit') {
           balance += amount;
