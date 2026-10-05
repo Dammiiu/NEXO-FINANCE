@@ -54,7 +54,15 @@ interface GiftCardEntry {
 // "import.meta.env" identifier, not optional-chained member access.
 const ALLPAYS_PAYMENT_ID = (() => {
   const env = (import.meta.env || {}) as Record<string, string | undefined>;
-  return (env.VITE_ALLPAYS_PAYMENT_ID || '').trim();
+  const raw = (env.VITE_ALLPAYS_PAYMENT_ID || '').trim();
+  if (!raw) return '';
+  // Accept either a bare id or the full checkout URL - both get pasted into
+  // this variable in practice, and prepending the base to a full URL produced
+  // a doubled query string.
+  const fromUrl = raw.match(/payment_id=([A-Za-z0-9_-]+)/);
+  if (fromUrl) return fromUrl[1];
+  const bare = raw.match(/(pay_[A-Za-z0-9_-]+)/);
+  return bare ? bare[1] : '';
 })();
 
 const DEFAULT_WALLETS: AdminWalletSetting[] = [
