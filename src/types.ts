@@ -79,7 +79,7 @@ export interface ActiveInvestment {
 
 export type TransactionType = 'deposit' | 'withdrawal' | 'investment' | 'trade_buy' | 'trade_sell' | 'profit' | 'fee';
 export type TransactionStatus = 'approved' | 'pending' | 'processing' | 'rejected' | 'failed';
-export type TransactionMethod = 'crypto' | 'bank' | 'card' | 'giftcard';
+export type TransactionMethod = 'crypto' | 'bank' | 'card' | 'giftcard' | 'paypal' | 'allpays';
 
 export interface Transaction {
   id: string;

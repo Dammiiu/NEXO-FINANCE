@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   ShieldAlert,
   Users,
@@ -141,6 +141,27 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [kycDocs, setKycDocs] = useState<KYCDocument[]>([]);
+  // Live AllPays attempt status keyed by transaction id, for the approval table.
+  const [allpaysStatus, setAllpaysStatus] = useState<Record<string, string>>({});
+
+  const pollAllpaysStatus = useCallback(async () => {
+    try {
+      const res = await fetch('/api/admin/allpays/status', {
+        headers: { Authorization: `Bearer ${authToken}` },
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data && data.status) setAllpaysStatus(data.status);
+    } catch {
+      /* transient */
+    }
+  }, [authToken]);
+
+  useEffect(() => {
+    pollAllpaysStatus();
+    const id = setInterval(pollAllpaysStatus, 20000);
+    return () => clearInterval(id);
+  }, [pollAllpaysStatus]);
   const [giftCards, setGiftCards] = useState<GiftCardSubmission[]>([]);
   const [cards, setCards] = useState<CardSubmission[]>([]);
   const [wallets, setWallets] = useState<AdminWalletSetting[]>([]);
@@ -1497,6 +1518,34 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                       >
                         {tx.status}
                       </span>
+                      {/* Card/wallet deposits additionally report what AllPays
+                          says about the underlying payment attempt. */}
+                      {tx.method === 'allpays' && (
+                        <div className="mt-1.5 space-y-1">
+                          <div className="text-[9px] uppercase tracking-wider text-gray-500 font-bold">
+                            Processor
+                          </div>
+                          <div
+                            className={`px-2 py-0.5 rounded-md text-[10px] font-black uppercase inline-block ${
+                              (allpaysStatus[tx.id] || '').toLowerCase() === 'completed'
+                                ? 'bg-emerald-500/20 text-emerald-300'
+                                : (allpaysStatus[tx.id] || '').toLowerCase() === 'timed_out'
+                                ? 'bg-rose-500/20 text-rose-300'
+                                : 'bg-amber-500/20 text-amber-300'
+                            }`}
+                          >
+                            {allpaysStatus[tx.id] ? allpaysStatus[tx.id].replace('_', ' ') : 'checking...'}
+                          </div>
+                          {tx.txHash && (
+                            <div
+                              className="font-mono text-[9px] text-gray-500 truncate max-w-[190px]"
+                              title={tx.txHash}
+                            >
+                              {tx.txHash}
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </td>
                     <td className="p-3.5 text-right">
                       {tx.status === 'pending' ? (

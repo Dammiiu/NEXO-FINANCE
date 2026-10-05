@@ -20,6 +20,7 @@ import {
   X,
   Sparkles,
   Zap,
+  DollarSign,
 } from 'lucide-react';
 import { UserProfile, AdminWalletSetting } from '../../types';
 
@@ -77,6 +78,18 @@ export const Deposit: React.FC<DepositProps> = ({
   const [selectedWallet, setSelectedWallet] = useState<AdminWalletSetting>(DEFAULT_WALLETS[2]);
   const [copied, setCopied] = useState(false);
 
+  // AllPays hosted checkout
+  const [allpaysAmount, setAllpaysAmount] = useState('100');
+  const [allpaysBusy, setAllpaysBusy] = useState(false);
+  const [allpaysError, setAllpaysError] = useState<string | null>(null);
+  const [allpaysLive, setAllpaysLive] = useState<{
+    status: string;
+    provider?: string;
+    completedAt?: string | null;
+  } | null>(null);
+  const [allpaysRef, setAllpaysRef] = useState<string | null>(null);
+  const [allpaysRail, setAllpaysRail] = useState<{ id: string; name: string; logo?: string }[]>([]);
+
   // Crypto Form State
   const [cryptoAmount, setCryptoAmount] = useState('1000');
   const [txHash, setTxHash] = useState('');
@@ -122,7 +135,51 @@ export const Deposit: React.FC<DepositProps> = ({
   } | null>(null);
 
   useEffect(() => {
-    const fetchWallets = async () => {
+    // Fetch the rails AllPays actually offers so the badges are not hardcoded.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/deposit/allpays/methods');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!cancelled && Array.isArray(data.methods)) setAllpaysRail(data.methods);
+      } catch {
+        /* keep the built-in badges */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Poll our own status endpoint; it asks AllPays for the live attempt state.
+  useEffect(() => {
+    if (activeChannel !== 'wallets') return;
+    let stopped = false;
+    const tick = async () => {
+      try {
+        const res = await fetch('/api/deposit/allpays/status', {
+          headers: { Authorization: `Bearer ${authToken}` },
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (stopped) return;
+        if (data.transaction) setAllpaysRef(data.transaction.payRequestHash || null);
+        if (data.payment) setAllpaysLive(data.payment);
+      } catch {
+        /* transient */
+      }
+    };
+    tick();
+    const id = setInterval(tick, 7000);
+    return () => {
+      stopped = true;
+      clearInterval(id);
+    };
+  }, [activeChannel, authToken]);
+
+  const fetchWallets = async () => {
       try {
         const res = await fetch('/api/deposit/wallets');
         if (res.ok) {
@@ -417,6 +474,40 @@ export const Deposit: React.FC<DepositProps> = ({
     }
   };
 
+  const handleAllpaysStart = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAllpaysError(null);
+    const amt = parseFloat(allpaysAmount);
+    if (!(amt >= 10)) {
+      setAllpaysError('The minimum deposit is $10.');
+      return;
+    }
+    setAllpaysBusy(true);
+    try {
+      const res = await fetch('/api/deposit/allpays/session', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${authToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ amount: amt }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setAllpaysError(data.error || 'Could not start the checkout.');
+        return;
+      }
+      setAllpaysRef(data.payRequestHash || null);
+      if (data.checkoutUrl) {
+        window.open(data.checkoutUrl, '_blank', 'noopener,noreferrer');
+      }
+    } catch {
+      setAllpaysError('Connection error. Please try again.');
+    } finally {
+      setAllpaysBusy(false);
+    }
+  };
+
   return (
     <div className="space-y-8 animate-fade-in">
       {/* Header */}
@@ -583,32 +674,36 @@ export const Deposit: React.FC<DepositProps> = ({
             </span>
           </div>
 
-          {/* Accepted rails */}
+          {/* Accepted rails, taken from AllPays so they cannot drift */}
           <div className="mb-5">
             <div className="text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-gray-400 mb-2.5">
               Supported methods
             </div>
             <div className="flex flex-wrap gap-2">
-              {[
-                { label: 'Cards', sub: 'Visa · Mastercard · Amex', tone: 'from-slate-700 to-slate-900', text: 'text-white' },
-                { label: 'Google Pay', sub: 'One-tap checkout', tone: 'from-blue-500 to-blue-600', text: 'text-white' },
-                { label: 'Apple Pay', sub: 'Touch ID / Face ID', tone: 'from-neutral-800 to-black', text: 'text-white' },
-                { label: 'PayPal', sub: 'PayPal balance', tone: 'from-sky-500 to-sky-600', text: 'text-white' },
-                { label: 'Venmo', sub: 'US wallet', tone: 'from-cyan-400 to-cyan-500', text: 'text-white' },
-                { label: 'Revolut', sub: 'EU wallet', tone: 'from-slate-600 to-slate-800', text: 'text-white' },
-                { label: 'Bank transfer', sub: 'ACH · SEPA', tone: 'from-emerald-600 to-emerald-700', text: 'text-white' },
-              ].map((m) => (
+              {(allpaysRail.length > 0
+                ? allpaysRail
+                : [
+                    { id: 'credit-card', name: 'Cards' },
+                    { id: 'google-pay', name: 'Google Pay' },
+                    { id: 'apple-pay', name: 'Apple Pay' },
+                    { id: 'paypal', name: 'PayPal' },
+                    { id: 'venmo', name: 'Venmo' },
+                    { id: 'revolut', name: 'Revolut' },
+                    { id: 'bank-transfer', name: 'Bank transfer' },
+                  ]
+              ).map((m) => (
                 <div
-                  key={m.label}
-                  className={`flex items-center gap-2.5 px-3 py-2 rounded-xl bg-gradient-to-br ${m.tone} ${m.text} border border-black/10 dark:border-white/10 shadow-sm`}
+                  key={m.id}
+                  className={`flex items-center gap-2 px-3 py-2 rounded-xl border bg-white dark:bg-gray-900 text-slate-900 dark:text-white ${
+                    theme === 'dark' ? 'border-gray-800' : 'border-slate-200'
+                  }`}
                 >
-                  <div className="w-7 h-7 rounded-lg bg-white/15 backdrop-blur flex items-center justify-center shrink-0">
-                    <Zap className="w-3.5 h-3.5" />
-                  </div>
-                  <div className="leading-tight">
-                    <div className="text-[11px] font-black">{m.label}</div>
-                    <div className="text-[9px] opacity-80">{m.sub}</div>
-                  </div>
+                  {m.logo ? (
+                    <img src={m.logo} alt={m.name} className="h-6 w-6 object-contain" loading="lazy" />
+                  ) : (
+                    <Zap className="w-4 h-4 text-emerald-600 dark:text-[#00FFB2]" />
+                  )}
+                  <span className="text-[11px] font-bold">{m.name}</span>
                 </div>
               ))}
               <div className="flex items-center px-3 py-2 rounded-xl border border-dashed border-slate-300 dark:border-gray-700 text-[11px] font-bold text-slate-500 dark:text-gray-400">
@@ -617,31 +712,80 @@ export const Deposit: React.FC<DepositProps> = ({
             </div>
           </div>
 
-          {/* AllPays checkout */}
-          {ALLPAYS_PAYMENT_ID ? (
-            <div
-              className={`rounded-2xl overflow-hidden border ${
-                theme === 'dark' ? 'border-gray-800 bg-white' : 'border-slate-200 bg-white'
-              }`}
-            >
-              <iframe
-                key={ALLPAYS_PAYMENT_ID}
-                src={'https://allpays.co/pay?payment_id=' + ALLPAYS_PAYMENT_ID}
-                title="Secure checkout"
-                style={{ width: '100%', height: 620, border: 'none' }}
-                allow="payment"
-                referrerPolicy="no-referrer-when-downgrade"
-              />
+          {/* Amount */}
+          <form onSubmit={handleAllpaysStart} className="space-y-3">
+            <div>
+              <div className="flex justify-between items-center mb-1">
+                <label className="text-slate-500 dark:text-gray-400 font-semibold">Amount (USD)</label>
+                <span className="text-[11px] text-slate-500 dark:text-gray-400 font-mono">
+                  Minimum $10
+                </span>
+              </div>
+              <div className="relative">
+                <DollarSign className="w-4 h-4 absolute left-3 top-3 text-slate-500 dark:text-gray-400" />
+                <input
+                  type="number"
+                  min="10"
+                  step="0.01"
+                  value={allpaysAmount}
+                  onChange={(e) => setAllpaysAmount(e.target.value)}
+                  className="w-full bg-slate-100 dark:bg-gray-950 border border-slate-200 dark:border-gray-800 rounded-xl pl-9 pr-4 py-2.5 text-sm font-mono font-bold text-slate-900 dark:text-white focus:outline-none focus:border-[#00FFB2]"
+                />
+              </div>
             </div>
-          ) : (
-            <div className="p-6 rounded-2xl border border-dashed border-amber-500/40 bg-amber-500/5 text-center">
-              <AlertCircle className="w-6 h-6 mx-auto text-amber-600 dark:text-amber-400" />
-              <p className="mt-2 text-sm font-bold text-slate-900 dark:text-white">
-                Checkout is being configured
+
+            {allpaysError && (
+              <p className="text-xs font-bold text-rose-500 flex items-center gap-1.5">
+                <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                {allpaysError}
               </p>
-              <p className="mt-1 text-xs text-slate-600 dark:text-gray-400">
-                Card, bank transfer and wallet deposits are being switched on. Please use Crypto
-                Transfer or Gift Card in the meantime.
+            )}
+
+            <button
+              type="submit"
+              disabled={allpaysBusy}
+              className="w-full py-3 rounded-2xl bg-[#00FFB2] text-black font-black text-xs uppercase tracking-wider hover:brightness-110 transition disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+            >
+              {allpaysBusy ? (
+                <span className="w-4 h-4 border-2 border-black/30 border-t-black rounded-full animate-spin" />
+              ) : (
+                <>
+                  <Lock className="w-3.5 h-3.5" />
+                  Continue to secure checkout
+                </>
+              )}
+            </button>
+          </form>
+
+          {/* Live status from AllPays */}
+          {allpaysRef && (
+            <div className={`mt-5 p-4 rounded-2xl border ${
+              theme === 'dark' ? 'bg-gray-950/60 border-gray-800' : 'bg-slate-50 border-slate-200'
+            }`}>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-gray-400">
+                  Payment status
+                </span>
+                <span
+                  className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase ${
+                    allpaysLive && allpaysLive.status === 'completed'
+                      ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
+                      : allpaysLive && allpaysLive.status === 'timed_out'
+                      ? 'bg-rose-500/15 text-rose-500'
+                      : 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
+                  }`}
+                >
+                  {allpaysLive ? allpaysLive.status.replace('_', ' ') : 'awaiting payment'}
+                </span>
+              </div>
+              {allpaysLive && allpaysLive.provider && (
+                <p className="mt-2 text-[11px] text-slate-600 dark:text-gray-400">
+                  Paid via <span className="font-bold text-slate-900 dark:text-white">{allpaysLive.provider}</span>
+                </p>
+              )}
+              <p className="mt-2 text-[11px] text-slate-600 dark:text-gray-400 leading-relaxed">
+                Once AllPays confirms the payment, an administrator reviews and releases it to
+                your Nexo balance.
               </p>
             </div>
           )}

@@ -1139,6 +1139,180 @@ app.post('/api/transactions/withdraw', async (req, res) => {
   }
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// ALLPAYS HOSTED CHECKOUT
+//
+// Server-initiated so the pay_request_hash is captured here. The raw widget
+// iframe runs on AllPays' origin and never tells us the attempt reference, so a
+// static embed cannot be polled. Starting the checkout through the API gives us
+// the hash, which we keep in transactions.tx_hash and then poll.
+//
+// The payment_id is public (it appears in the checkout URL). The payment SECRET is
+// deliberately never read here.
+// ─────────────────────────────────────────────────────────────────────────────
+const ALLPAYS_API = 'https://api.allpays.co/v1';
+
+const allpaysGet = async (path: string): Promise<any | null> => {
+  try {
+    const res = await fetch(ALLPAYS_API + path, {
+      headers: { Accept: 'application/json', 'User-Agent': 'NexoFinance/1.0' },
+    });
+    if (!res.ok) {
+      console.error('[allpays] non-OK', res.status, path);
+      return null;
+    }
+    return await res.json();
+  } catch (e: any) {
+    console.error('[allpays] request failed', e && e.message);
+    return null;
+  }
+};
+
+// Ask AllPays which rails this link can offer, so the client can advertise them.
+app.get('/api/deposit/allpays/methods', async (_req, res) => {
+  try {
+    const j = await allpaysGet('/gateways');
+    const providers = (j && j.data && j.data.payment_providers) || [];
+    const methods: { id: string; name: string; logo: string }[] = [];
+    const seen = new Set<string>();
+    for (const p of providers) {
+      if (p.status && p.status !== 'active') continue;
+      for (const m of p.supported_methods || []) {
+        if (seen.has(m.id)) continue;
+        seen.add(m.id);
+        methods.push({ id: m.id, name: m.name, logo: m.logo });
+      }
+    }
+    res.set('Cache-Control', 'public, max-age=600');
+    return res.json({ methods });
+  } catch (err) {
+    return res.status(500).json({ error: 'Could not load payment methods.' });
+  }
+});
+
+// Start a checkout. Creates the pending transaction up front so it is visible to
+// the admin immediately, then returns the provider checkout URL.
+app.post('/api/deposit/allpays/session', async (req, res) => {
+  try {
+    const user = await getAuthUser(req);
+    if (!user) return res.status(401).json({ error: 'Unauthorized' });
+
+    const paymentId = String(process.env.ALLPAYS_PAYMENT_ID || '').trim();
+    if (!paymentId) {
+      return res.status(503).json({ error: 'Card and wallet deposits are not configured yet.' });
+    }
+
+    const amount = parseFloat(String(req.body && req.body.amount));
+    if (!(amount >= 10)) {
+      return res.status(400).json({ error: 'The minimum deposit is $10.' });
+    }
+
+    const started = await allpaysGet(
+      '/payments/' + encodeURIComponent(paymentId) + '/pay?email=' + encodeURIComponent(user.email) +
+        '&amount=' + encodeURIComponent(String(amount))
+    );
+
+    const d = (started && started.data) || null;
+    if (!d || !d.pay_request_hash) {
+      const msg = (started && (started.error || (started.errors && started.errors[0] && started.errors[0].message))) || 'Checkout could not be started.';
+      return res.status(502).json({ error: msg });
+    }
+
+    const txId = genId('tx_pay');
+    const summary =
+      'AllPays deposit of $' + amount.toLocaleString() + ' by ' + user.email +
+      (d.provider ? ' via ' + d.provider : '');
+
+    const row = {
+      id: txId,
+      user_id: user.uid,
+      user_email: user.email,
+      type: 'deposit',
+      method: 'allpays',
+      amount,
+      coin: 'USD',
+      tx_hash: d.pay_request_hash,
+      status: 'pending',
+      details: summary,
+    };
+    transactionsStore.unshift(row);
+
+    try {
+      const { error: insErr } = await db.from('transactions').insert([row]);
+      if (insErr) throw insErr;
+    } catch (err) {
+      console.error('[allpays] could not persist session', err);
+      return res.status(500).json({ error: 'Could not start the deposit. Please try again.' });
+    }
+
+    return res.status(201).json({
+      txId,
+      checkoutUrl: d.checkout_url,
+      payRequestHash: d.pay_request_hash,
+      provider: d.provider,
+      amount,
+    });
+  } catch (err) {
+    console.error('[allpays] session failed', err);
+    return res.status(500).json({ error: 'Could not start the deposit.' });
+  }
+});
+
+// Report the live status of the caller's most recent AllPays deposit. The
+// transaction stays 'pending' until an administrator approves it, so a captured
+// payment is never auto-credited.
+app.get('/api/deposit/allpays/status', async (req, res) => {
+  try {
+    const user = await getAuthUser(req);
+    if (!user) return res.status(401).json({ error: 'Unauthorized' });
+
+    const { data: rows } = await db
+      .from('transactions')
+      .select('*')
+      .eq('user_id', user.uid)
+      .eq('method', 'allpays')
+      .order('created_at', { ascending: false })
+      .limit(1);
+
+    let row = Array.isArray(rows) && rows.length > 0 ? rows[0] : null;
+    if (!row) {
+      const local = transactionsStore.find((t) => t.userId === user.uid && t.method === 'allpays');
+      row = local || null;
+    }
+    if (!row) return res.json({ transaction: null });
+
+    let live: any = null;
+    if (row.tx_hash) {
+      const j = await allpaysGet('/payment-attempts/' + encodeURIComponent(row.tx_hash));
+      const a = j && j.data && j.data.attempt;
+      if (a) {
+        live = {
+          status: a.status,
+          provider: a.provider,
+          amount: a.amount,
+          currency: a.currency,
+          completedAt: a.completed_at || null,
+        };
+      }
+    }
+
+    return res.json({
+      transaction: {
+        id: row.id,
+        amount: parseFloat(row.amount) || 0,
+        currency: row.coin || 'USD',
+        approvalStatus: row.status,
+        createdAt: row.created_at || row.createdAt,
+        payRequestHash: row.tx_hash || null,
+      },
+      payment: live,
+    });
+  } catch (err) {
+    console.error('[allpays] status failed', err);
+    return res.status(500).json({ error: 'Could not read the deposit status.' });
+  }
+});
+
 // Deposit wallet addresses
 app.get('/api/deposit/wallets', async (_req, res) => {
   try {
@@ -2422,6 +2596,42 @@ app.put('/api/admin/transactions/:id/action', requireAdmin, async (req, res) => 
     }
   } catch (err) {
     return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Live AllPays attempt status for the admin approval table. Server-side so the
+// payment_id stays off the client and the provider is never called from a
+// browser. Reads are cached briefly because this runs on every poll.
+app.get('/api/admin/allpays/status', requireAdmin, async (_req, res) => {
+  try {
+    const { data } = await db
+      .from('transactions')
+      .select('id,tx_hash')
+      .eq('method', 'allpays')
+      .not('tx_hash', 'is', null)
+      .limit(25);
+
+    const rows = Array.isArray(data) ? data : [];
+    const out: Record<string, string> = {};
+
+    for (const row of rows) {
+      const hash = String(row.tx_hash || '').trim();
+      if (!hash) continue;
+      const cacheKey = 'ap_status_' + hash;
+      const cached = cacheGet(cacheKey, 20000);
+      if (cached) {
+        out[row.id] = cached;
+        continue;
+      }
+      const j = await allpaysGet('/payment-attempts/' + encodeURIComponent(hash));
+      const status = j && j.data && j.data.attempt && j.data.attempt.status;
+      if (status) out[row.id] = String(status);
+    }
+
+    return res.json({ status: out, fetchedAt: new Date().toISOString() });
+  } catch (err) {
+    console.error('[allpays] admin status failed', err);
+    return res.status(500).json({ error: 'Could not read processor status.' });
   }
 });
 
