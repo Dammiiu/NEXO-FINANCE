@@ -7,6 +7,7 @@ import {
   EyeOff,
   Zap,
   ShieldCheck,
+  Fingerprint,
   ArrowRight,
   Sun,
   Moon,
@@ -298,8 +299,8 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
           >
             {/* Header */}
             <div className="text-center mb-6">
-              <div className="w-12 h-12 rounded-2xl bg-[#00FFB2]/10 border border-[#00FFB2]/30 flex items-center justify-center mx-auto text-[#00FFB2] mb-3 shadow-inner">
-                <Lock className="w-6 h-6" />
+              <div className="w-14 h-14 rounded-2xl bg-emerald-500/10 dark:bg-[#00FFB2]/10 border border-emerald-500/30 dark:border-[#00FFB2]/30 flex items-center justify-center mx-auto text-emerald-700 dark:text-[#00FFB2] mb-3 shadow-inner">
+                <Fingerprint className="w-7 h-7" />
               </div>
               <h1 className="text-xl sm:text-2xl font-black tracking-tight">
                 Sign in or Register to continue

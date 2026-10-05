@@ -402,7 +402,7 @@ export const Deposit: React.FC<DepositProps> = ({
     <div className="space-y-8 animate-fade-in">
       {/* Header */}
       <div>
-        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-bold bg-[#00FFB2]/10 text-[#00FFB2] border border-[#00FFB2]/20 mb-2">
+        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-bold bg-emerald-500/10 text-emerald-700 dark:text-[#00FFB2] border border-emerald-500/30 dark:border-[#00FFB2]/20 mb-2">
           <ArrowDownLeft className="w-3.5 h-3.5" />
           <span>Multi-Gateway Payment Center</span>
         </div>
@@ -590,11 +590,20 @@ export const Deposit: React.FC<DepositProps> = ({
               </div>
             </div>
 
-            <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-500 text-xs flex items-start gap-2">
-              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-              <span>
-                Send only {selectedWallet.coin} ({selectedWallet.network}) to this address. All incoming payments require admin ledger verification and approval before crediting.
-              </span>
+            <div className="p-4 rounded-2xl bg-amber-500/10 dark:bg-amber-500/5 border border-amber-500/30 dark:border-amber-500/20 space-y-1.5">
+              <div className="flex items-center gap-2 text-amber-700 dark:text-amber-400 text-xs font-black uppercase tracking-wider">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span>Network details</span>
+              </div>
+              <p className="text-xs text-slate-700 dark:text-gray-300 leading-relaxed">
+                Send <span className="font-bold">{selectedWallet.coin}</span> using the{' '}
+                <span className="font-bold">{selectedWallet.network}</span> network only. Funds sent on
+                any other network cannot be recovered.
+              </p>
+              <p className="text-[11px] text-slate-600 dark:text-gray-400 leading-relaxed">
+                After you submit your transaction hash below, the deposit is credited once the transfer
+                is confirmed on the network.
+              </p>
             </div>
           </div>
 

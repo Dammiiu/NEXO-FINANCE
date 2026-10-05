@@ -191,7 +191,7 @@ export const Trade: React.FC<TradeProps> = ({
       {/* Header and Quick Stats */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-bold bg-[#00FFB2]/10 text-[#00FFB2] border border-[#00FFB2]/20 mb-2">
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-bold bg-emerald-500/10 text-emerald-700 dark:text-[#00FFB2] border border-emerald-500/30 dark:border-[#00FFB2]/20 mb-2">
             <TrendingUp className="w-3.5 h-3.5" />
             <span>Nexo Spot Exchange • Real-Time Order Matching</span>
           </div>

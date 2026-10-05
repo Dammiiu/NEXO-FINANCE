@@ -196,7 +196,7 @@ export const Portfolio: React.FC<PortfolioProps> = ({
           <div className="flex items-center justify-between text-xs font-bold mb-2">
             <span className="text-slate-500 dark:text-gray-400 uppercase tracking-wider">TOTAL ESTIMATED ASSETS</span>
             <div className="w-8 h-8 rounded-xl bg-[#00FFB2]/10 border border-[#00FFB2]/30 flex items-center justify-center">
-              <Wallet className="w-4 h-4 text-[#00FFB2]" />
+              <Wallet className="w-4 h-4 text-emerald-600 dark:text-[#00FFB2]" />
             </div>
           </div>
           <div className="text-3xl font-black text-slate-950 dark:text-white tracking-tight font-mono">
@@ -355,7 +355,7 @@ export const Portfolio: React.FC<PortfolioProps> = ({
           <div>
             <div className="flex items-center justify-between mb-4">
               <h3 className="font-black text-sm text-slate-900 dark:text-white uppercase tracking-wider flex items-center gap-2">
-                <PieIcon className="w-4 h-4 text-[#00FFB2]" />
+                <PieIcon className="w-4 h-4 text-emerald-600 dark:text-[#00FFB2]" />
                 <span>Asset Allocation Split</span>
               </h3>
               <span className="text-xs text-emerald-600 dark:text-[#00FFB2] font-mono font-bold bg-emerald-500/10 px-2 py-0.5 rounded-full">

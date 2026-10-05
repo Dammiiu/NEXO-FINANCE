@@ -216,7 +216,7 @@ export const Invest: React.FC<InvestProps> = ({
         >
           <div>
             <span className="text-gray-400 block text-[10px]">Available Liquid Balance</span>
-            <span className="font-black text-[#00FFB2] text-base font-mono">
+            <span className="font-black text-emerald-600 dark:text-[#00FFB2] text-base font-mono">
               ${(user?.balance ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
             </span>
           </div>

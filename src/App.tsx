@@ -375,13 +375,13 @@ export const App: React.FC = () => {
           >
             <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-[#00FFB2] via-blue-600 to-indigo-600 p-0.5 shadow-lg shadow-[#00FFB2]/20">
               <div className="w-full h-full bg-[#0B0E17] rounded-[14px] flex items-center justify-center">
-                <Zap className="w-5 h-5 text-[#00FFB2]" />
+                <Zap className="w-5 h-5 text-emerald-600 dark:text-[#00FFB2]" />
               </div>
             </div>
             <div>
               <span className="font-black text-lg tracking-tight flex items-center gap-1">
                 <span className={theme === 'dark' ? 'text-white' : 'text-slate-900'}>NEXO</span>
-                <span className="text-[#00FFB2]">FINANCE</span>
+                <span className="text-emerald-600 dark:text-[#00FFB2]">FINANCE</span>
               </span>
               <span className="text-[9px] text-slate-500 dark:text-gray-400 tracking-wider block font-mono">
                 INSTITUTIONAL LIQUIDITY PROTOCOL
@@ -489,7 +489,7 @@ export const App: React.FC = () => {
               }`}
               title="Manage Account Settings & Security"
             >
-              <div className="w-7 h-7 rounded-xl bg-[#00FFB2]/20 border border-[#00FFB2]/40 flex items-center justify-center text-xs font-black text-[#00FFB2]">
+              <div className="w-7 h-7 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-xs font-black text-[#00FFB2]">
                 {user.fullName ? user.fullName[0].toUpperCase() : 'U'}
               </div>
               <div className="text-left hidden sm:block">
@@ -652,7 +652,7 @@ export const App: React.FC = () => {
                 }}
                 className={`flex flex-col items-center justify-center gap-1 h-full py-1 cursor-pointer transition ${
                   isActive
-                    ? 'text-[#00FFB2] font-black'
+                    ? 'text-emerald-600 dark:text-[#00FFB2] font-black'
                     : theme === 'dark'
                     ? 'text-gray-400 hover:text-white'
                     : 'text-slate-500 hover:text-slate-900'
@@ -660,7 +660,7 @@ export const App: React.FC = () => {
               >
                 <div
                   className={`p-1 rounded-xl transition ${
-                    isActive ? 'bg-[#00FFB2]/15 text-[#00FFB2]' : ''
+                    isActive ? 'bg-emerald-500/15 text-emerald-700 dark:text-[#00FFB2]' : ''
                   }`}
                 >
                   <Icon className="w-5 h-5 stroke-[2.2]" />
@@ -677,7 +677,7 @@ export const App: React.FC = () => {
               isMobileMenuOpen ||
               ['withdraw', 'kyc', 'transactions', 'profile'].includes(activeTab) ||
               isAdminOpen
-                ? 'text-[#00FFB2] font-black'
+                ? 'text-emerald-600 dark:text-[#00FFB2] font-black'
                 : theme === 'dark'
                 ? 'text-gray-400 hover:text-white'
                 : 'text-slate-500 hover:text-slate-900'
@@ -685,7 +685,7 @@ export const App: React.FC = () => {
           >
             <div
               className={`p-1 rounded-xl transition ${
-                isMobileMenuOpen ? 'bg-[#00FFB2]/15 text-[#00FFB2]' : ''
+                isMobileMenuOpen ? 'bg-emerald-500/15 text-emerald-700 dark:text-[#00FFB2]' : ''
               }`}
             >
               <Menu className="w-5 h-5 stroke-[2.2]" />
@@ -717,7 +717,7 @@ export const App: React.FC = () => {
             {/* User identity card */}
             <div className="flex items-center justify-between pb-4 mb-4 border-b border-gray-800/80">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-2xl bg-[#00FFB2]/20 border border-[#00FFB2]/40 flex items-center justify-center font-black text-[#00FFB2]">
+                <div className="w-10 h-10 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center font-black text-[#00FFB2]">
                   {user.fullName ? user.fullName[0].toUpperCase() : 'U'}
                 </div>
                 <div>
@@ -729,7 +729,7 @@ export const App: React.FC = () => {
                 <span className="text-[10px] uppercase font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
                   {user.kycStatus === 'verified_tier2' ? 'Tier 2 Verified' : user.kycStatus}
                 </span>
-                <span className="block text-xs font-mono font-bold mt-1 text-[#00FFB2]">
+                <span className="block text-xs font-mono font-bold mt-1 text-emerald-600 dark:text-[#00FFB2]">
                   ${user.balance.toLocaleString()}
                 </span>
               </div>
@@ -755,7 +755,7 @@ export const App: React.FC = () => {
                     }}
                     className={`p-3 rounded-2xl border text-left transition flex flex-col justify-between cursor-pointer ${
                       isActive
-                        ? 'bg-[#00FFB2]/10 border-[#00FFB2] text-[#00FFB2]'
+                        ? 'bg-emerald-500/10 border-emerald-500 text-emerald-700 dark:border-[#00FFB2] dark:text-[#00FFB2]'
                         : theme === 'dark'
                         ? 'bg-[#0B0E17] border-gray-800 hover:border-gray-700 text-white'
                         : 'bg-slate-50 border-slate-200 hover:border-slate-300 text-slate-900'
@@ -819,7 +819,7 @@ export const App: React.FC = () => {
       >
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col md:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-2">
-            <ShieldCheck className="w-4 h-4 text-[#00FFB2]" />
+            <ShieldCheck className="w-4 h-4 text-emerald-600 dark:text-[#00FFB2]" />
             <span className="font-bold">NEXO FINANCE PROTOCOL • Regulated Institutional Custody</span>
           </div>
 

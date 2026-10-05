@@ -66,7 +66,7 @@ export const Transactions: React.FC<TransactionsProps> = ({
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-bold bg-[#00FFB2]/10 text-[#00FFB2] border border-[#00FFB2]/20 mb-2">
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-bold bg-emerald-500/10 text-emerald-700 dark:text-[#00FFB2] border border-emerald-500/30 dark:border-[#00FFB2]/20 mb-2">
             <History className="w-3.5 h-3.5" />
             <span>Immutable Cryptographic Audit Trail</span>
           </div>
@@ -82,7 +82,7 @@ export const Transactions: React.FC<TransactionsProps> = ({
           onClick={handleExportCSV}
           className="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-slate-100 dark:bg-gray-800 hover:bg-slate-200 dark:hover:bg-gray-700 text-slate-800 dark:text-gray-200 font-bold text-xs transition cursor-pointer border border-slate-200 dark:border-gray-700 self-start md:self-auto"
         >
-          <Download className="w-4 h-4 text-[#00FFB2]" />
+          <Download className="w-4 h-4 text-emerald-600 dark:text-[#00FFB2]" />
           <span>Export CSV Statement</span>
         </button>
       </div>

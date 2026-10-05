@@ -336,7 +336,7 @@ export const Testimonials: React.FC<{ theme?: 'dark' | 'light' }> = ({ theme = '
                     <div>
                       <div className="font-extrabold text-sm text-slate-900 dark:text-white flex items-center gap-1.5">
                         <span>{item.name}</span>
-                        <CheckCircle2 className="w-4 h-4 text-[#00FFB2]" />
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-[#00FFB2]" />
                       </div>
                       <div className="text-[11px] text-slate-500 dark:text-gray-400">
                         {item.role} • {item.location}
@@ -378,7 +378,7 @@ export const Testimonials: React.FC<{ theme?: 'dark' | 'light' }> = ({ theme = '
               {/* Card Footer */}
               <div className="pt-4 mt-4 border-t border-slate-100 dark:border-gray-800/80 flex items-center justify-between text-[11px] text-slate-400 dark:text-gray-500">
                 <div className="flex items-center gap-1.5 font-mono text-[10px]">
-                  <Award className="w-3.5 h-3.5 text-[#00FFB2]" />
+                  <Award className="w-3.5 h-3.5 text-emerald-600 dark:text-[#00FFB2]" />
                   <span>{item.auditTxHash.substring(0, 10)}...</span>
                 </div>
 
@@ -415,7 +415,7 @@ export const Testimonials: React.FC<{ theme?: 'dark' | 'light' }> = ({ theme = '
 
             <div className="mb-5">
               <h3 className="text-lg font-black flex items-center gap-2">
-                <ShieldCheck className="w-5 h-5 text-[#00FFB2]" />
+                <ShieldCheck className="w-5 h-5 text-emerald-600 dark:text-[#00FFB2]" />
                 <span>Submit Verified Staking Experience</span>
               </h3>
               <p className="text-xs text-gray-400 mt-1">
@@ -425,7 +425,7 @@ export const Testimonials: React.FC<{ theme?: 'dark' | 'light' }> = ({ theme = '
 
             {showSuccessToast ? (
               <div className="py-12 text-center space-y-3">
-                <CheckCircle2 className="w-12 h-12 text-[#00FFB2] mx-auto animate-bounce" />
+                <CheckCircle2 className="w-12 h-12 text-emerald-600 dark:text-[#00FFB2] mx-auto animate-bounce" />
                 <h4 className="font-black text-lg">Review Verified & Anchored!</h4>
                 <p className="text-xs text-gray-400">Added to the public ledger audit feed.</p>
               </div>

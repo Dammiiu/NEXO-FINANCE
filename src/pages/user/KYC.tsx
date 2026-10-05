@@ -118,7 +118,7 @@ export const KYC: React.FC<KYCProps> = ({
     <div className="space-y-8 animate-fade-in" id="kyc-vault-container">
       {/* Header */}
       <div>
-        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-bold bg-[#00FFB2]/10 text-[#00FFB2] border border-[#00FFB2]/20 mb-2">
+        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-bold bg-emerald-500/10 text-emerald-700 dark:text-[#00FFB2] border border-emerald-500/30 dark:border-[#00FFB2]/20 mb-2">
           <FileCheck className="w-3.5 h-3.5" />
           <span>Anti-Money Laundering & Identity Clearance</span>
         </div>
