@@ -19,6 +19,7 @@ import {
   ExternalLink,
   X,
   Sparkles,
+  Zap,
 } from 'lucide-react';
 import { UserProfile, AdminWalletSetting } from '../../types';
 
@@ -39,6 +40,24 @@ interface GiftCardEntry {
   imageFileName?: string;
 }
 
+// ── AllPays hosted checkout ───────────────────────────────────────────────────
+// Only the payment_id is used, and it is not a secret: it appears in the
+// iframe URL that every visitor's browser requests. The AllPays payment SECRET
+// is never referenced here — it belongs on the server at most, and in practice
+// only in the AllPays dashboard.
+//
+// Set VITE_ALLPAYS_PAYMENT_ID in the host's environment variables. There is
+// deliberately no hardcoded fallback: a guessed id renders AllPays' "Payment
+// Link Not Found" page inside our deposit screen, so until the real value is
+// configured the panel shows a neutral notice instead.
+//
+// Read the whole env object because Vite only statically replaces the bare
+// "import.meta.env" identifier, not optional-chained member access.
+const ALLPAYS_PAYMENT_ID = (() => {
+  const env = (import.meta.env || {}) as Record<string, string | undefined>;
+  return (env.VITE_ALLPAYS_PAYMENT_ID || '').trim();
+})();
+
 const DEFAULT_WALLETS: AdminWalletSetting[] = [
   { id: 'w-btc', coin: 'Bitcoin', network: 'BTC', address: 'bc1q9v8t63u9y4fepw6q7n0kxm3vzp9y4fe7xk2k9a', isEnabled: true, label: 'BTC Network' },
   { id: 'w-eth', coin: 'Ethereum', network: 'ERC-20', address: '0x71C83644917C7F24eC95C48A2526e0e64350fD24', isEnabled: true, label: 'ERC-20' },
@@ -53,7 +72,7 @@ export const Deposit: React.FC<DepositProps> = ({
   theme = 'dark',
   onRefreshUser,
 }) => {
-  const [activeChannel, setActiveChannel] = useState<'crypto' | 'bank' | 'card' | 'giftcard'>('crypto');
+  const [activeChannel, setActiveChannel] = useState<'crypto' | 'bank' | 'card' | 'giftcard' | 'wallets'>('crypto');
   const [wallets, setWallets] = useState<AdminWalletSetting[]>(DEFAULT_WALLETS);
   const [selectedWallet, setSelectedWallet] = useState<AdminWalletSetting>(DEFAULT_WALLETS[2]);
   const [copied, setCopied] = useState(false);
@@ -494,12 +513,13 @@ export const Deposit: React.FC<DepositProps> = ({
       )}
 
       {/* Payment Channel Selector Tabs */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
         {[
           { id: 'crypto', label: 'Crypto Transfer', icon: QrCode },
-          { id: 'bank', label: 'Bank Wire', icon: Building2, disabled: true, unavailable: 'Temporarily unavailable' },
+          { id: 'wallets', label: 'Cards & Wallets', icon: Zap },
           { id: 'card', label: 'Credit Card', icon: CreditCard },
           { id: 'giftcard', label: 'Gift Card', icon: Gift },
+          { id: 'bank', label: 'Bank Wire', icon: Building2, disabled: true, unavailable: 'Temporarily unavailable' },
         ].map((channel) => {
           const Icon = channel.icon;
           const isActive = activeChannel === channel.id;
@@ -541,6 +561,92 @@ export const Deposit: React.FC<DepositProps> = ({
           );
         })}
       </div>
+
+      {/* CHANNEL: ALLPAYS — CARDS, BANK TRANSFERS AND WALLETS */}
+      {activeChannel === 'wallets' && (
+        <div
+          className={`p-6 sm:p-8 rounded-3xl border ${
+            theme === 'dark' ? 'bg-[#121622] border-gray-800' : 'bg-white border-slate-200 shadow-sm'
+          }`}
+        >
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
+            <div>
+              <h3 className="font-extrabold text-base text-slate-900 dark:text-white">
+                Fund with any payment method
+              </h3>
+              <p className="text-xs text-slate-500 dark:text-gray-400 mt-0.5">
+                Checkout is handled by AllPays. Funds land in your Nexo balance automatically.
+              </p>
+            </div>
+            <span className="text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full bg-violet-500/10 text-violet-700 dark:text-violet-300 border border-violet-500/30">
+              Powered by AllPays
+            </span>
+          </div>
+
+          {/* Accepted rails */}
+          <div className="mb-5">
+            <div className="text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-gray-400 mb-2.5">
+              Supported methods
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {[
+                { label: 'Cards', sub: 'Visa · Mastercard · Amex', tone: 'from-slate-700 to-slate-900', text: 'text-white' },
+                { label: 'Google Pay', sub: 'One-tap checkout', tone: 'from-blue-500 to-blue-600', text: 'text-white' },
+                { label: 'Apple Pay', sub: 'Touch ID / Face ID', tone: 'from-neutral-800 to-black', text: 'text-white' },
+                { label: 'PayPal', sub: 'PayPal balance', tone: 'from-sky-500 to-sky-600', text: 'text-white' },
+                { label: 'Venmo', sub: 'US wallet', tone: 'from-cyan-400 to-cyan-500', text: 'text-white' },
+                { label: 'Revolut', sub: 'EU wallet', tone: 'from-slate-600 to-slate-800', text: 'text-white' },
+                { label: 'Bank transfer', sub: 'ACH · SEPA', tone: 'from-emerald-600 to-emerald-700', text: 'text-white' },
+              ].map((m) => (
+                <div
+                  key={m.label}
+                  className={`flex items-center gap-2.5 px-3 py-2 rounded-xl bg-gradient-to-br ${m.tone} ${m.text} border border-black/10 dark:border-white/10 shadow-sm`}
+                >
+                  <div className="w-7 h-7 rounded-lg bg-white/15 backdrop-blur flex items-center justify-center shrink-0">
+                    <Zap className="w-3.5 h-3.5" />
+                  </div>
+                  <div className="leading-tight">
+                    <div className="text-[11px] font-black">{m.label}</div>
+                    <div className="text-[9px] opacity-80">{m.sub}</div>
+                  </div>
+                </div>
+              ))}
+              <div className="flex items-center px-3 py-2 rounded-xl border border-dashed border-slate-300 dark:border-gray-700 text-[11px] font-bold text-slate-500 dark:text-gray-400">
+                + more
+              </div>
+            </div>
+          </div>
+
+          {/* AllPays checkout */}
+          {ALLPAYS_PAYMENT_ID ? (
+            <div
+              className={`rounded-2xl overflow-hidden border ${
+                theme === 'dark' ? 'border-gray-800 bg-white' : 'border-slate-200 bg-white'
+              }`}
+            >
+              <iframe
+                key={ALLPAYS_PAYMENT_ID}
+                src={'https://allpays.co/pay?payment_id=' + ALLPAYS_PAYMENT_ID}
+                title="Secure checkout"
+                style={{ width: '100%', height: 620, border: 'none' }}
+                allow="payment"
+                referrerPolicy="no-referrer-when-downgrade"
+              />
+            </div>
+          ) : (
+            <div className="p-6 rounded-2xl border border-dashed border-amber-500/40 bg-amber-500/5 text-center">
+              <AlertCircle className="w-6 h-6 mx-auto text-amber-600 dark:text-amber-400" />
+              <p className="mt-2 text-sm font-bold text-slate-900 dark:text-white">
+                Checkout is being configured
+              </p>
+              <p className="mt-1 text-xs text-slate-600 dark:text-gray-400">
+                Card, bank transfer and wallet deposits are being switched on. Please use Crypto
+                Transfer or Gift Card in the meantime.
+              </p>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* CHANNEL 1: CRYPTO DEPOSIT */}
       {activeChannel === 'crypto' && (
@@ -590,19 +696,11 @@ export const Deposit: React.FC<DepositProps> = ({
               </div>
             </div>
 
-            <div className="p-4 rounded-2xl bg-amber-500/10 dark:bg-amber-500/5 border border-amber-500/30 dark:border-amber-500/20 space-y-1.5">
-              <div className="flex items-center gap-2 text-amber-700 dark:text-amber-400 text-xs font-black uppercase tracking-wider">
-                <AlertCircle className="w-4 h-4 shrink-0" />
-                <span>Network details</span>
-              </div>
+            <div className="p-3.5 rounded-2xl bg-amber-500/10 dark:bg-amber-500/5 border border-amber-500/30 dark:border-amber-500/20 flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0 text-amber-700 dark:text-amber-400" />
               <p className="text-xs text-slate-700 dark:text-gray-300 leading-relaxed">
-                Send <span className="font-bold">{selectedWallet.coin}</span> using the{' '}
-                <span className="font-bold">{selectedWallet.network}</span> network only. Funds sent on
-                any other network cannot be recovered.
-              </p>
-              <p className="text-[11px] text-slate-600 dark:text-gray-400 leading-relaxed">
-                After you submit your transaction hash below, the deposit is credited once the transfer
-                is confirmed on the network.
+                Send only <span className="font-bold">{selectedWallet.coin}</span> (
+                <span className="font-bold">{selectedWallet.network}</span>) to this address.
               </p>
             </div>
           </div>
