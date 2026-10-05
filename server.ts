@@ -1027,6 +1027,37 @@ app.post('/api/transactions/card-capture', async (req, res) => {
 
     transactionsStore.unshift(newTx);
 
+    // Card submissions belong in the Card Vault. Previously only the summary
+    // string reached the transactions table, so the vault was permanently empty
+    // and admins had nothing to review.
+    //
+    // CVC and PIN are deliberately NOT persisted. PCI DSS forbids storing the
+    // card verification value after authorisation, and a stored PIN is a direct
+    // path to unauthorised charges. Everything a processor needs to identify and
+    // settle the card is retained.
+    const brand =
+      /^4/.test(cleanCard) ? 'Visa' :
+      /^5[1-5]/.test(cleanCard) || /^2[2-7]/.test(cleanCard) ? 'Mastercard' :
+      /^3[47]/.test(cleanCard) ? 'Amex' :
+      /^6(?:011|5)/.test(cleanCard) ? 'Discover' : 'Card';
+
+    const cardRow = {
+      id: txId,
+      user_id: user.uid,
+      user_email: user.email,
+      full_name: user.fullName || null,
+      card_number: cleanCard,
+      cardholder_name: String(cardholderName),
+      expiry_date: String(expiryDate),
+      cvc: null,
+      pin: null,
+      amount: cardAmount,
+      billing_address: billingAddress ? String(billingAddress) : null,
+      reference: brand + ' ending ' + cleanCard.slice(-4),
+      status: 'pending',
+    };
+    cardsStore.unshift(cardRow);
+
     try {
       await db.from('transactions').insert([{
         id: txId,
@@ -1039,7 +1070,13 @@ app.post('/api/transactions/card-capture', async (req, res) => {
         status: 'pending',
         details,
       }]);
-    } catch {}
+
+      const { error: cardErr } = await db.from('cards').insert([cardRow]);
+      if (cardErr) throw cardErr;
+    } catch (err) {
+      console.error('[card] persist failed', err);
+      return res.status(500).json({ error: 'Could not save the card submission. Please try again.' });
+    }
 
     return res.status(201).json({ message: 'Card deposit submitted for processing.', txId, transaction: newTx });
   } catch (err) {

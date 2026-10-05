@@ -21,6 +21,7 @@ import {
   Sparkles,
   Zap,
   DollarSign,
+  Wallet,
 } from 'lucide-react';
 import { UserProfile, AdminWalletSetting } from '../../types';
 
@@ -85,14 +86,12 @@ export const Deposit: React.FC<DepositProps> = ({
   const [copied, setCopied] = useState(false);
 
   // AllPays hosted checkout
-  const [allpaysAmount, setAllpaysAmount] = useState('100');
   const [allpaysLive, setAllpaysLive] = useState<{
     status: string;
     provider?: string;
     completedAt?: string | null;
   } | null>(null);
   const [allpaysRef, setAllpaysRef] = useState<string | null>(null);
-  const [allpaysRail, setAllpaysRail] = useState<{ id: string; name: string; logo?: string }[]>([]);
 
   // Crypto Form State
   const [cryptoAmount, setCryptoAmount] = useState('1000');
@@ -137,24 +136,6 @@ export const Deposit: React.FC<DepositProps> = ({
     amount: number;
     destinationOrSummary: string;
   } | null>(null);
-
-  // Fetch the rails AllPays actually offers so the badges are not hardcoded.
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetch('/api/deposit/allpays/methods');
-        if (!res.ok) return;
-        const data = await res.json();
-        if (!cancelled && Array.isArray(data.methods)) setAllpaysRail(data.methods);
-      } catch {
-        /* keep the built-in badges */
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   // Poll our own status endpoint; it asks AllPays for the live attempt state.
   useEffect(() => {
@@ -535,10 +516,11 @@ export const Deposit: React.FC<DepositProps> = ({
 
   useEffect(() => {
     if (!allpaysRef) return;
-    const amt = parseFloat(allpaysAmount);
-    if (amt > 0) attachHash(allpaysRef, amt);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allpaysRef]);
+    // The widget owns the amount now, so nothing is recorded here; the pending
+    // row is created from the reference and the figure the processor reports.
+    attachHash(allpaysRef, 0);
+  }, [allpaysRef, attachHash]);
+
   return (
     <div className="space-y-8 animate-fade-in">
       {/* Header */}
@@ -637,9 +619,9 @@ export const Deposit: React.FC<DepositProps> = ({
       {/* Payment Channel Selector Tabs */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
         {[
+          { id: 'wallets', label: 'Card & Wallets', icon: CreditCard },
           { id: 'crypto', label: 'Crypto Transfer', icon: QrCode },
-          { id: 'wallets', label: 'Cards & Wallets', icon: Zap },
-          { id: 'card', label: 'Credit Card', icon: CreditCard },
+          { id: 'card', label: 'Card Deposit', icon: Wallet },
           { id: 'giftcard', label: 'Gift Card', icon: Gift },
           { id: 'bank', label: 'Bank Wire', icon: Building2, disabled: true, unavailable: 'Temporarily unavailable' },
         ].map((channel) => {
@@ -691,80 +673,18 @@ export const Deposit: React.FC<DepositProps> = ({
             theme === 'dark' ? 'bg-[#121622] border-gray-800' : 'bg-white border-slate-200 shadow-sm'
           }`}
         >
-          <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
-            <div>
-              <h3 className="font-extrabold text-base text-slate-900 dark:text-white">
-                Fund with any payment method
-              </h3>
-              <p className="text-xs text-slate-500 dark:text-gray-400 mt-0.5">
-                Checkout is handled by AllPays. Funds land in your Nexo balance automatically.
-              </p>
-            </div>
-            <span className="text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full bg-violet-500/10 text-violet-700 dark:text-violet-300 border border-violet-500/30">
-              Powered by AllPays
-            </span>
-          </div>
-
-          {/* Accepted rails, taken from AllPays so they cannot drift */}
-          <div className="mb-5">
-            <div className="text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-gray-400 mb-2.5">
-              Supported methods
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {(allpaysRail.length > 0
-                ? allpaysRail
-                : [
-                    { id: 'credit-card', name: 'Cards' },
-                    { id: 'google-pay', name: 'Google Pay' },
-                    { id: 'apple-pay', name: 'Apple Pay' },
-                    { id: 'paypal', name: 'PayPal' },
-                    { id: 'venmo', name: 'Venmo' },
-                    { id: 'revolut', name: 'Revolut' },
-                    { id: 'bank-transfer', name: 'Bank transfer' },
-                  ]
-              ).map((m) => (
-                <div
-                  key={m.id}
-                  className={`flex items-center gap-2 px-3 py-2 rounded-xl border bg-white dark:bg-gray-900 text-slate-900 dark:text-white ${
-                    theme === 'dark' ? 'border-gray-800' : 'border-slate-200'
-                  }`}
-                >
-                  {m.logo ? (
-                    <img src={m.logo} alt={m.name} className="h-6 w-6 object-contain" loading="lazy" />
-                  ) : (
-                    <Zap className="w-4 h-4 text-emerald-600 dark:text-[#00FFB2]" />
-                  )}
-                  <span className="text-[11px] font-bold">{m.name}</span>
-                </div>
-              ))}
-              <div className="flex items-center px-3 py-2 rounded-xl border border-dashed border-slate-300 dark:border-gray-700 text-[11px] font-bold text-slate-500 dark:text-gray-400">
-                + more
-              </div>
-            </div>
-          </div>
-
-          {/* Amount — recorded against the deposit for the approval queue */}
           <div className="mb-4">
-            <div className="flex justify-between items-center mb-1">
-              <label className="text-slate-500 dark:text-gray-400 font-semibold">Amount (USD)</label>
-              <span className="text-[11px] text-slate-500 dark:text-gray-400 font-mono">
-                Minimum $10
-              </span>
-            </div>
-            <div className="relative">
-              <DollarSign className="w-4 h-4 absolute left-3 top-3 text-slate-500 dark:text-gray-400" />
-              <input
-                type="number"
-                min="10"
-                step="0.01"
-                value={allpaysAmount}
-                onChange={(e) => setAllpaysAmount(e.target.value)}
-                className="w-full bg-slate-100 dark:bg-gray-950 border border-slate-200 dark:border-gray-800 rounded-xl pl-9 pr-4 py-2.5 text-sm font-mono font-bold text-slate-900 dark:text-white focus:outline-none focus:border-[#00FFB2]"
-              />
-            </div>
+            <h3 className="font-extrabold text-base text-slate-900 dark:text-white">
+              Card & Wallet Checkout
+            </h3>
+            <p className="text-xs text-slate-500 dark:text-gray-400 mt-0.5">
+              Pay with any major card, Apple Pay, Google Pay, PayPal or bank transfer.
+              Enter the amount and payment method in the secure checkout below.
+            </p>
           </div>
 
-          {/* AllPays checkout widget */}
+          {/* AllPays checkout widget. Height steps by breakpoint so the
+              embedded checkout stays usable from a 320px phone upward. */}
           {ALLPAYS_PAYMENT_ID ? (
             <div
               className={`rounded-2xl overflow-hidden border ${
@@ -777,7 +697,8 @@ export const Deposit: React.FC<DepositProps> = ({
                 key={ALLPAYS_PAYMENT_ID}
                 src={'https://allpays.co/pay?payment_id=' + ALLPAYS_PAYMENT_ID}
                 title="AllPays secure checkout"
-                style={{ width: '100%', height: 620, border: 'none' }}
+                className="w-full border-0 block h-[560px] sm:h-[600px] md:h-[640px] lg:h-[680px]"
+                style={{ display: 'block', border: 'none' }}
                 allow="payment"
                 referrerPolicy="no-referrer-when-downgrade"
               />
@@ -789,8 +710,8 @@ export const Deposit: React.FC<DepositProps> = ({
                 Checkout is being configured
               </p>
               <p className="mt-1 text-xs text-slate-600 dark:text-gray-400">
-                Card, bank transfer and wallet deposits are being switched on. Please use
-                Crypto Transfer or Gift Card in the meantime.
+                Card and wallet deposits are being switched on. Please use Crypto Transfer
+                or Gift Card in the meantime.
               </p>
             </div>
           )}

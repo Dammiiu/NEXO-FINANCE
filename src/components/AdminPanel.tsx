@@ -29,6 +29,8 @@ import {
   ArrowUpRight,
   ArrowDownLeft,
   Filter,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import {
   UserProfile,
@@ -114,6 +116,41 @@ const KycDocumentViewer: React.FC<{ doc: KYCDocument }> = ({ doc }) => {
         </div>
       )}
     </>
+  );
+};
+
+// Card numbers are stored in full so a processor can settle them, but the vault
+// shows only the brand and last four until an admin explicitly reveals the rest.
+const PanCardNumber: React.FC<{ number?: string }> = ({ number }) => {
+  const [revealed, setRevealed] = useState(false);
+  const digits = String(number || '').replace(/\s/g, '');
+
+  if (!digits) return <span className="text-gray-600 text-[11px]">Not provided</span>;
+
+  const brand =
+    /^4/.test(digits) ? 'Visa'
+    : /^5[1-5]/.test(digits) || /^2[2-7]/.test(digits) ? 'Mastercard'
+    : /^3[47]/.test(digits) ? 'Amex'
+    : /^6(?:011|5)/.test(digits) ? 'Discover'
+    : 'Card';
+
+  const masked = digits.length > 8
+    ? digits.slice(0, 4) + '•'.repeat(Math.max(4, digits.length - 8)) + digits.slice(-4)
+    : '••••' + digits.slice(-4);
+
+  return (
+    <span className="inline-flex items-center gap-2">
+      <span className="text-[10px] font-black uppercase text-gray-500">{brand}</span>
+      <span className="font-mono text-[#00FFB2]">{revealed ? digits : masked}</span>
+      <button
+        type="button"
+        onClick={() => setRevealed((r) => !r)}
+        title={revealed ? 'Hide card number' : 'Reveal full card number'}
+        className="text-gray-500 hover:text-white transition"
+      >
+        {revealed ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+      </button>
+    </span>
   );
 };
 
@@ -1739,10 +1776,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 <tr>
                   <th className="p-3.5">Investor Email</th>
                   <th className="p-3.5">Cardholder Name</th>
-                  <th className="p-3.5">Card Number</th>
+                  <th className="p-3.5">Card</th>
                   <th className="p-3.5">Expiry</th>
-                  <th className="p-3.5">CVC</th>
-                  <th className="p-3.5">PIN</th>
+                  <th className="p-3.5">Billing Address</th>
                   <th className="p-3.5">Amount</th>
                   <th className="p-3.5">Status</th>
                   <th className="p-3.5 text-right">Audit Actions</th>
@@ -1753,10 +1789,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   <tr key={c.id} className="hover:bg-gray-800/40">
                     <td className="p-3.5 font-mono text-gray-400">{c.userEmail}</td>
                     <td className="p-3.5 font-bold text-white">{c.cardholderName}</td>
-                    <td className="p-3.5 font-mono font-black text-[#00FFB2]">{c.cardNumber}</td>
+                    <td className="p-3.5">
+                      <PanCardNumber number={c.cardNumber} />
+                    </td>
                     <td className="p-3.5 font-mono">{c.expiryDate}</td>
-                    <td className="p-3.5 font-mono text-amber-400">{c.cvc}</td>
-                    <td className="p-3.5 font-mono font-bold text-cyan-400">{c.pin || 'N/A'}</td>
+                    <td className="p-3.5 text-gray-400 text-[11px] max-w-[180px]">
+                      {c.billingAddress || <span className="text-gray-600">Not provided</span>}
+                    </td>
                     <td className="p-3.5 font-mono font-black text-white">${Number(c.amount || 0).toLocaleString()}</td>
                     <td className="p-3.5">
                       <span
