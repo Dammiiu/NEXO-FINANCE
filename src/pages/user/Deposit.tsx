@@ -130,8 +130,7 @@ export const Deposit: React.FC<DepositProps> = ({
     destinationOrSummary: string;
   } | null>(null);
 
-  useEffect(() => {
-    // Fetch the rails AllPays actually offers so the badges are not hardcoded.
+  // Fetch the rails AllPays actually offers so the badges are not hardcoded.
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -175,7 +174,8 @@ export const Deposit: React.FC<DepositProps> = ({
     };
   }, [activeChannel, authToken]);
 
-  const fetchWallets = async () => {
+  useEffect(() => {
+    const fetchWallets = async () => {
       try {
         const res = await fetch('/api/deposit/wallets');
         if (res.ok) {
