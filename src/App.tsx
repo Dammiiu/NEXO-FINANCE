@@ -401,15 +401,20 @@ export const App: React.FC = () => {
         </div>
       )}
 
-      {/* Real-time On-Chain Marquee Header Stream */}
-      <HeaderLiveActivityTicker theme={theme} />
+      {/* Pinned header stack. The live activity ticker and the navigation bar
+          are wrapped together so they stick as one unit: the notification keeps
+          a single fixed position and never scrolls out of view on the way down
+          a page. Sticking them separately would let the nav overlap the ticker. */}
+      <div className="sticky top-0 z-40">
+        {/* Real-time On-Chain Marquee Header Stream */}
+        <HeaderLiveActivityTicker theme={theme} />
 
-      {/* Primary Sticky Header */}
-      <header
-        className={`sticky top-0 z-40 border-b backdrop-blur-md transition-colors duration-200 ${
-          theme === 'dark' ? 'bg-[#0B0E17]/95 border-gray-800/90' : 'bg-white/95 border-slate-200 shadow-xs'
-        }`}
-      >
+        {/* Primary Header */}
+        <header
+          className={`border-b backdrop-blur-md transition-colors duration-200 ${
+            theme === 'dark' ? 'bg-[#0B0E17]/95 border-gray-800/90' : 'bg-white/95 border-slate-200 shadow-xs'
+          }`}
+        >
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
           {/* Brand Logo */}
           <div
@@ -570,7 +575,8 @@ export const App: React.FC = () => {
             </button>
           </div>
         </div>
-      </header>
+        </header>
+      </div>
 
       {/* Main Content Area */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-8 pb-28 xl:pb-12">

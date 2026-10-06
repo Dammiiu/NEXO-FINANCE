@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import {
   ArrowDownLeft,
   ArrowUpRight,
@@ -83,7 +84,7 @@ export const HeaderLiveActivityTicker: React.FC<HeaderLiveActivityTickerProps> =
 
 
 
-        <div className="max-w-7xl mx-auto px-3 sm:px-6 py-2 flex items-center justify-between gap-2 sm:gap-3">
+        <div className="max-w-7xl mx-auto px-3 sm:px-6 py-1.5 sm:py-2 flex items-center justify-between gap-2 sm:gap-3">
           {/* Left: Live Multi-Sig Node Indicator Pill */}
           <div className="shrink-0 flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-black tracking-wide border shadow-xs bg-white dark:bg-gray-900/90 border-slate-300 dark:border-gray-700 text-emerald-700 dark:text-[#00FFB2]">
             <span className="relative flex h-2 w-2">
@@ -189,9 +190,12 @@ export const HeaderLiveActivityTicker: React.FC<HeaderLiveActivityTickerProps> =
         </div>
       </div>
 
-      {/* Proof & Ledger Inspector Modal */}
-      {showProofModal && selectedProof && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-fade-in">
+      {/* Proof & Ledger Inspector Modal.
+          Rendered through a portal: the ticker lives inside a sticky wrapper,
+          which forms its own stacking context, so an in-tree fixed overlay would
+          be trapped underneath overlays that are not part of that stack. */}
+      {showProofModal && selectedProof && createPortal(
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-fade-in">
           <div className="w-full max-w-lg rounded-3xl p-6 shadow-2xl border relative bg-white dark:bg-[#121622] border-slate-200 dark:border-gray-800 text-slate-900 dark:text-white">
             <button
               onClick={() => setShowProofModal(false)}
@@ -313,7 +317,8 @@ export const HeaderLiveActivityTicker: React.FC<HeaderLiveActivityTickerProps> =
               </div>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </>
   );
