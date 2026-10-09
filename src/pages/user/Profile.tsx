@@ -12,8 +12,10 @@ import {
   Mail,
   Phone,
   Globe,
+  ChevronDown,
 } from 'lucide-react';
 import { UserProfile } from '../../types';
+import { COUNTRIES } from '../../lib/countries';
 
 interface ProfileProps {
   user: UserProfile;
@@ -32,7 +34,7 @@ export const Profile: React.FC<ProfileProps> = ({
 }) => {
   const [fullName, setFullName] = useState(user.fullName || '');
   const [phone, setPhone] = useState(user.phone || '');
-  const [country, setCountry] = useState(user.country || 'United States');
+  const [country, setCountry] = useState(user.country || '');
 
   // Security Form
   const [oldPassword, setOldPassword] = useState('');
@@ -86,20 +88,29 @@ export const Profile: React.FC<ProfileProps> = ({
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          oldPassword,
+          oldPassword: oldPassword || undefined,
           newPassword: newPassword || undefined,
           securityPin: newPin || undefined,
           twoFactorEnabled: twoFaState,
         }),
       });
+      const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        setMessage('Security credentials and 2FA preferences successfully updated.');
+        // Only claim what was actually saved - "Nothing to update" and a silent
+        // no-op look identical otherwise.
+        const saved: string[] = data.updated || [];
+        setMessage(
+          saved.length
+            ? `Security settings updated: ${saved.join(', ')}.`
+            : 'Security settings saved.'
+        );
         setOldPassword('');
         setNewPassword('');
         setNewPin('');
         onRefreshUser();
       } else {
-        setErrorMessage('Failed to update security credentials.');
+        // Surface the real reason rather than a blanket failure.
+        setErrorMessage(data.error || 'Failed to update security credentials.');
       }
     } catch (err) {
       setErrorMessage('Connection error updating security.');
@@ -201,15 +212,29 @@ export const Profile: React.FC<ProfileProps> = ({
             </div>
 
             <div>
-              <label className="block text-slate-500 dark:text-gray-400 font-semibold mb-1">Country of Residence</label>
+              <label className="block text-slate-500 dark:text-gray-400 font-semibold mb-1">
+                Country of Residence {country ? '' : <span className="text-amber-500">(required)</span>}
+              </label>
               <div className="relative">
-                <Globe className="w-4 h-4 absolute left-3 top-3 text-slate-500 dark:text-gray-400" />
-                <input
-                  type="text"
+                <Globe className="w-4 h-4 absolute left-3 top-3 text-slate-500 dark:text-gray-400 pointer-events-none" />
+                <select
+                  required
                   value={country}
                   onChange={(e) => setCountry(e.target.value)}
-                  className="w-full bg-slate-100 dark:bg-gray-950 border border-slate-200 dark:border-gray-800 rounded-xl pl-9 pr-4 py-2.5 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-[#00FFB2]"
-                />
+                  className={`w-full appearance-none bg-slate-100 dark:bg-gray-950 border rounded-xl pl-9 pr-9 py-2.5 text-xs focus:outline-none focus:border-[#00FFB2] ${
+                    country
+                      ? 'text-slate-900 dark:text-white border-slate-200 dark:border-gray-800'
+                      : 'text-slate-500 dark:text-gray-400 border-amber-500/60'
+                  }`}
+                >
+                  <option value="">Select your country...</option>
+                  {COUNTRIES.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="w-4 h-4 absolute right-3 top-3 text-slate-500 dark:text-gray-400 pointer-events-none" />
               </div>
             </div>
 
@@ -235,23 +260,53 @@ export const Profile: React.FC<ProfileProps> = ({
               <span>Security & Access Controls</span>
             </h3>
 
-            {/* 2FA Toggle */}
-            <div className="p-4 rounded-2xl bg-slate-50 dark:bg-gray-950/80 border border-slate-200 dark:border-gray-800 flex items-center justify-between">
+            {/* 2FA Toggle - entirely optional */}
+            <div className="p-4 rounded-2xl bg-slate-50 dark:bg-gray-950/80 border border-slate-200 dark:border-gray-800 flex items-center justify-between gap-3">
               <div className="space-y-0.5">
-                <span className="font-extrabold text-xs text-slate-900 dark:text-white block">
-                  Two-Factor Authentication (2FA)
+                <span className="font-extrabold text-xs text-slate-900 dark:text-white flex items-center gap-2">
+                  Two-Factor Authentication
+                  <span className="px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-wider bg-slate-200 dark:bg-gray-800 text-slate-600 dark:text-gray-300 border border-slate-300 dark:border-gray-700">
+                    Optional
+                  </span>
                 </span>
-                <span className="text-[11px] text-slate-500 dark:text-gray-400">Require 6-digit OTP code on withdrawals</span>
+                <span className="text-[11px] text-slate-500 dark:text-gray-400">
+                  {twoFaState
+                    ? 'A 6-digit OTP is required to approve withdrawals.'
+                    : 'Off. Your account is protected by password and PIN only.'}
+                </span>
               </div>
-              <label className="relative inline-flex items-center cursor-pointer">
+              <label className="relative inline-flex items-center cursor-pointer shrink-0">
                 <input
                   type="checkbox"
                   checked={twoFaState}
                   onChange={(e) => setTwoFaState(e.target.checked)}
+                  aria-label="Enable two-factor authentication"
                   className="sr-only peer"
                 />
                 <div className="w-11 h-6 bg-slate-300 dark:bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 dark:after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#00FFB2]"></div>
               </label>
+            </div>
+
+            {/* Current password: required to change any credential, so a stolen
+                session token is not enough to take the account over. */}
+            <div>
+              <label className="block text-slate-500 dark:text-gray-400 font-semibold mb-1">
+                Current Password
+              </label>
+              <div className="relative">
+                <Lock className="w-4 h-4 absolute left-3 top-3 text-slate-500 dark:text-gray-400" />
+                <input
+                  type="password"
+                  autoComplete="current-password"
+                  placeholder="Required to change your PIN or password"
+                  value={oldPassword}
+                  onChange={(e) => setOldPassword(e.target.value)}
+                  className="w-full bg-slate-100 dark:bg-gray-950 border border-slate-200 dark:border-gray-800 rounded-xl pl-9 pr-4 py-2.5 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-[#00FFB2]"
+                />
+              </div>
+              <p className="text-[10px] text-slate-500 dark:text-gray-400 mt-1">
+                Leave blank if you are only changing the 2FA toggle.
+              </p>
             </div>
 
             {/* Update PIN */}

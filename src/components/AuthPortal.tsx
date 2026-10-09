@@ -1,8 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { COUNTRIES } from '../lib/countries';
 import {
   Lock,
   Mail,
   User as UserIcon,
+  Globe as GlobeIcon,
+  ChevronDown as ChevronDownIcon,
   Eye,
   EyeOff,
   Zap,
@@ -91,6 +94,7 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
+  const [country, setCountry] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [authLoadingType, setAuthLoadingType] = useState<'email' | 'google' | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -170,7 +174,10 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
           fullName: googleName,
           picture: googlePicture,
           sub: payload.sub,
-          country: 'United States',
+          // Google does not disclose a residence country, so only forward one
+          // the user actually chose. Previously this hard-coded 'United States',
+          // putting every Google registrant under the wrong regulator.
+          country: country || undefined,
         }),
       });
 
@@ -220,7 +227,7 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
       const payload =
         authMode === 'login'
           ? { email: userEmail, password }
-          : { email: userEmail, password, fullName: userName };
+          : { email: userEmail, password, fullName: userName, country };
 
       const res = await fetch(endpoint, {
         method: 'POST',
@@ -386,6 +393,42 @@ export const AuthPortal: React.FC<AuthPortalProps> = ({
                           : 'bg-slate-50 border-slate-300 text-slate-900 focus:border-blue-600'
                       }`}
                     />
+                  </div>
+                </div>
+              )}
+
+              {/* Country of residence. Drives KYC jurisdiction, so it is asked
+                  here rather than assumed - registration used to default every
+                  applicant to 'United States'. */}
+              {authMode === 'register' && (
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-gray-300 mb-1.5">
+                    Country of Residence
+                  </label>
+                  <div className="relative">
+                    <GlobeIcon className="w-4 h-4 absolute left-3.5 top-3.5 text-slate-400 pointer-events-none" />
+                    <select
+                      required
+                      value={country}
+                      onChange={(e) => setCountry(e.target.value)}
+                      className={`w-full pl-10 pr-9 py-3 rounded-2xl text-xs font-medium focus:outline-none transition border appearance-none ${
+                        country
+                          ? isDark
+                            ? 'bg-[#0B0E17] border-gray-800 text-white focus:border-[#00FFB2]'
+                            : 'bg-slate-50 border-slate-300 text-slate-900 focus:border-blue-600'
+                          : isDark
+                          ? 'bg-[#0B0E17] border-amber-500/60 text-gray-500 focus:border-[#00FFB2]'
+                          : 'bg-slate-50 border-amber-500/60 text-slate-500 focus:border-blue-600'
+                      }`}
+                    >
+                      <option value="">Select your country...</option>
+                      {COUNTRIES.map((c) => (
+                        <option key={c} value={c} className="bg-white text-slate-900">
+                          {c}
+                        </option>
+                      ))}
+                    </select>
+                    <ChevronDownIcon className="w-4 h-4 absolute right-3.5 top-3.5 text-slate-400 pointer-events-none" />
                   </div>
                 </div>
               )}

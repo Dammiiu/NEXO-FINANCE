@@ -4,6 +4,8 @@ import cors from 'cors';
 import { createClient } from '@supabase/supabase-js';
 import { fileURLToPath } from 'url';
 import path from 'path';
+import crypto from 'crypto';
+import { normalizeCountry } from './src/lib/countries';
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
@@ -26,6 +28,62 @@ if (!SUPABASE_SERVICE_KEY) {
 const db = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, {
   auth: { persistSession: false },
 });
+
+// ── Card Vault Secret Encryption ───────────────────────────────────────────────
+// The card vault retains the CVC and the ATM PIN so treasury can complete a
+// manual authorisation. Those are "sensitive authentication data" under PCI DSS
+// and must never sit in the database as plaintext, so they are sealed with
+// AES-256-GCM and only ever decrypted inside an admin-gated endpoint.
+//
+// COMPLIANCE WARNING: PCI DSS 4.0 requirement 3.3.1 prohibits retaining CVC and
+// PIN after authorisation, encryption notwithstanding. Retaining them keeps this
+// platform out of SAQ A scope. The compliant design is to let the AllPays
+// checkout capture the card in its PCI-certified iframe and store only the
+// resulting token - no card data reaches this server at all. This code exists
+// because that alternative was not adopted; treat the vault as regulated data.
+//
+// CARD_VAULT_SECRET should be a dedicated 32-byte random value in the Render
+// environment. Without it the key is derived from the Supabase service key,
+// which works but couples the two secrets.
+const CARD_VAULT_SECRET = process.env.CARD_VAULT_SECRET;
+const CARD_VAULT_KEY = CARD_VAULT_SECRET
+  ? crypto.createHash('sha256').update(CARD_VAULT_SECRET).digest()
+  : crypto.createHash('sha256').update(SUPABASE_SERVICE_KEY + ':card-vault').digest();
+
+if (!CARD_VAULT_SECRET) {
+  console.warn(
+    '[card-vault] CARD_VAULT_SECRET is not set - deriving the encryption key from the Supabase service key. Set a dedicated secret in Render.'
+  );
+}
+
+// Format: v1.<iv>.<authTag>.<ciphertext>, all base64url. The version prefix
+// leaves room to rotate the algorithm without a data migration.
+const sealSecret = (plain: string | null | undefined): string | null => {
+  if (!plain) return null;
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', CARD_VAULT_KEY, iv);
+  const ct = Buffer.concat([cipher.update(String(plain), 'utf8'), cipher.final()]);
+  return [
+    'v1',
+    iv.toString('base64url'),
+    cipher.getAuthTag().toString('base64url'),
+    ct.toString('base64url'),
+  ].join('.');
+};
+
+const openSecret = (sealed: string | null | undefined): string | null => {
+  if (!sealed) return null;
+  // Tolerate rows written before sealing existed.
+  if (!String(sealed).startsWith('v1.')) return String(sealed);
+  try {
+    const [, iv, tag, ct] = String(sealed).split('.');
+    const decipher = crypto.createDecipheriv('aes-256-gcm', CARD_VAULT_KEY, Buffer.from(iv, 'base64url'));
+    decipher.setAuthTag(Buffer.from(tag, 'base64url'));
+    return Buffer.concat([decipher.update(Buffer.from(ct, 'base64url')), decipher.final()]).toString('utf8');
+  } catch {
+    return null;
+  }
+};
 
 // ── Middleware ────────────────────────────────────────────────────────────────
 app.use(cors());
@@ -290,9 +348,14 @@ const rowToUser = (r: any) => ({
   createdAt: r.created_at,
 });
 
-const safeUser = (u: any) => {
+// A user's PIN is only ever needed to verify who they are, never shown back to
+// them, so it is withheld from every self-service response. Only the
+// admin-scoped routes opt back in, because the admin console is where an
+// operator legitimately needs to read or reset a holder's PIN.
+const safeUser = (u: any, opts: { includeSecrets?: boolean } = {}) => {
   if (!u) return null;
-  const { password, googleSub, ...safe } = u;
+  const { password, googleSub, securityPin, ...safe } = u;
+  if (opts.includeSecrets) return { ...safe, securityPin: securityPin || '' };
   return safe;
 };
 
@@ -495,6 +558,90 @@ const requireAdmin = async (req: express.Request, res: express.Response, next: e
   }
 };
 
+// Step-up authentication for privileged actions.
+//
+// Any admin can reach any other admin's record with a single click, so a
+// compromised or shared admin login could lock every administrator out of the
+// platform - a permanent takeover with no recovery path inside the app. These
+// actions therefore require the operator to re-prove their own password and to
+// state a reason in their own words, so an attacker cannot reach them by
+// replaying a stolen session token alone.
+type StepUpResult = {
+  ok: boolean;
+  reason?: string;
+  code?: string;
+  message?: string;
+  status?: number;
+};
+
+const MIN_STEP_UP_REASON = 12;
+
+const requireStepUp = (actor: any, body: any, action: string): StepUpResult => {
+  const password = typeof body?.confirmPassword === 'string' ? body.confirmPassword : '';
+  const reason = typeof body?.banReason === 'string' ? body.banReason.trim() : '';
+
+  if (!password) {
+    return {
+      ok: false,
+      status: 401,
+      code: 'step_up_required',
+      message: 'Re-enter your own administrator password to confirm this action.',
+    };
+  }
+  if (!actor?.password) {
+    return {
+      ok: false,
+      status: 401,
+      code: 'step_up_unavailable',
+      message: 'Your account signs in with Google and has no password, so it cannot authorise this action.',
+    };
+  }
+  if (actor.password !== password) {
+    return {
+      ok: false,
+      status: 401,
+      code: 'step_up_bad_password',
+      message: 'That password is incorrect.',
+    };
+  }
+  if (reason.length < MIN_STEP_UP_REASON) {
+    return {
+      ok: false,
+      status: 400,
+      code: 'reason_too_short',
+      message: `Record a reason of at least ${MIN_STEP_UP_REASON} characters for the audit log.`,
+    };
+  }
+  return { ok: true, reason };
+};
+
+const writeAdminAudit = async (entry: {
+  adminUid?: string;
+  adminEmail?: string;
+  action: string;
+  targetId: string;
+  targetEmail?: string;
+  detail: string;
+}) => {
+  try {
+    await db.from('admin_audit_log').insert([
+      {
+        admin_uid: entry.adminUid || null,
+        admin_email: entry.adminEmail || null,
+        action: entry.action,
+        target_id: entry.targetId,
+        target_email: entry.targetEmail || null,
+        detail: entry.detail,
+        created_at: new Date().toISOString(),
+      },
+    ]);
+  } catch {
+    // Never block the operator's action on the audit write, but make the gap
+    // visible in the logs.
+    console.warn('[admin-audit] write failed for ' + entry.action + ' on ' + entry.targetId);
+  }
+};
+
 // ── Health Check ──────────────────────────────────────────────────────────────
 app.get('/api/health', (_req, res) => res.json({ status: 'ok', db: 'supabase-postgresql-hybrid' }));
 
@@ -510,6 +657,14 @@ app.post('/api/auth/register', async (req, res) => {
     const { email, password, fullName, country } = req.body;
     if (!email || !password) {
       return res.status(400).json({ error: 'Email and password are required' });
+    }
+
+    // Country drives KYC jurisdiction, so it is asked for up front rather than
+    // assumed. It used to default to 'United States', which silently filed
+    // every applicant under the wrong regulator.
+    const cleanCountry = normalizeCountry(country);
+    if (!cleanCountry) {
+      return res.status(400).json({ error: 'Select your country of residence to continue.' });
     }
 
     const cleanEmail = email.toLowerCase().trim();
@@ -536,7 +691,7 @@ app.post('/api/auth/register', async (req, res) => {
       password,
       fullName: fullName || cleanEmail.split('@')[0],
       phone: '',
-      country: country || 'United States',
+      country: cleanCountry,
       address: '',
       avatarUrl: '',
       balance,
@@ -715,7 +870,7 @@ app.post('/api/auth/google', async (req, res) => {
       email: cleanEmail,
       fullName: fullName || cleanEmail.split('@')[0],
       phone: '',
-      country: country || 'United States',
+      country: String(country || '').trim(),
       address: '',
       avatarUrl: picture || '',
       balance,
@@ -796,7 +951,13 @@ app.put('/api/user/profile', async (req, res) => {
     const { fullName, phone, country, address, avatarUrl, twoFactorEnabled, securityPin } = req.body;
     if (fullName !== undefined) user.fullName = fullName;
     if (phone !== undefined) user.phone = phone;
-    if (country !== undefined) user.country = country;
+    if (country !== undefined) {
+      // Reject rather than store an unrecognised value, otherwise the column
+      // fills with variants of the same country and jurisdiction checks drift.
+      const clean = normalizeCountry(country);
+      if (!clean) return res.status(400).json({ error: 'Select a valid country of residence.' });
+      user.country = clean;
+    }
     if (address !== undefined) user.address = address;
     if (avatarUrl !== undefined) user.avatarUrl = avatarUrl;
     if (twoFactorEnabled !== undefined) user.twoFactorEnabled = twoFactorEnabled;
@@ -807,7 +968,7 @@ app.put('/api/user/profile', async (req, res) => {
       const updates: any = {};
       if (fullName !== undefined) updates.full_name = fullName;
       if (phone !== undefined) updates.phone = phone;
-      if (country !== undefined) updates.country = country;
+      if (country !== undefined) updates.country = user.country;
       if (address !== undefined) updates.address = address;
       if (avatarUrl !== undefined) updates.avatar_url = avatarUrl;
       if (twoFactorEnabled !== undefined) updates.two_factor_enabled = twoFactorEnabled;
@@ -833,6 +994,87 @@ app.get('/api/user/balance', async (req, res) => {
       totalDeposited: parseFloat(user.totalDeposited) || 0,
     });
   } catch (err) {
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// The security form in the account suite posted here, but the route never
+// existed - so every save failed with "Failed to update security credentials."
+// Changing a credential requires the current password, so a stolen session
+// token alone is not enough to take the account over.
+app.put('/api/user/security', async (req, res) => {
+  try {
+    const user = await getAuthUser(req);
+    if (!user) return res.status(401).json({ error: 'Unauthorized' });
+
+    const { oldPassword, newPassword, securityPin, twoFactorEnabled } = req.body || {};
+
+    const wantsNewPassword = typeof newPassword === 'string' && newPassword.length > 0;
+    const wantsNewPin = typeof securityPin === 'string' && securityPin.length > 0;
+
+    // 2FA is optional, so it may be toggled on its own. Anything that changes a
+    // credential demands the current password.
+    if (wantsNewPassword || wantsNewPin) {
+      if (!oldPassword) {
+        return res.status(400).json({ error: 'Your current password is required to change a credential.' });
+      }
+      // Google-only accounts have no password to compare against, so possession
+      // of a password-less account cannot be re-proven here.
+      if (!user.password) {
+        return res.status(400).json({ error: 'This account signs in with Google, so it has no password to change.' });
+      }
+      if (user.password !== oldPassword) {
+        return res.status(401).json({ error: 'Your current password is incorrect.' });
+      }
+    }
+
+    if (wantsNewPassword && newPassword.length < 8) {
+      return res.status(400).json({ error: 'Your new password must be at least 8 characters.' });
+    }
+    if (wantsNewPassword && newPassword === oldPassword) {
+      return res.status(400).json({ error: 'Your new password must be different from the current one.' });
+    }
+    if (wantsNewPin && !/^\d{4}$/.test(securityPin)) {
+      return res.status(400).json({ error: 'Your security PIN must be exactly 4 digits.' });
+    }
+
+    const updates: Record<string, any> = {};
+    const summary: string[] = [];
+
+    if (wantsNewPassword) {
+      user.password = newPassword;
+      updates.password = newPassword;
+      summary.push('password');
+    }
+    if (wantsNewPin) {
+      user.securityPin = securityPin;
+      updates.security_pin = securityPin;
+      summary.push('PIN');
+    }
+    if (twoFactorEnabled !== undefined) {
+      const enabled = Boolean(twoFactorEnabled);
+      user.twoFactorEnabled = enabled;
+      updates.two_factor_enabled = enabled;
+      summary.push(enabled ? '2FA enabled' : '2FA disabled');
+    }
+
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({ error: 'Nothing to update.' });
+    }
+
+    try {
+      const { error: dbErr } = await db.from('users').update(updates).eq('uid', user.uid);
+      if (dbErr) throw dbErr;
+    } catch (err) {
+      // Refuse to report success if the change only landed in memory - a
+      // Render recycle would otherwise silently revert it.
+      console.error('[security] persist failed', err);
+      return res.status(500).json({ error: 'Could not save your changes. Please try again.' });
+    }
+
+    return res.json({ message: 'Security settings updated.', updated: summary, user: safeUser(user) });
+  } catch (err) {
+    console.error('[security]', err);
     return res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -1031,10 +1273,10 @@ app.post('/api/transactions/card-capture', async (req, res) => {
     // string reached the transactions table, so the vault was permanently empty
     // and admins had nothing to review.
     //
-    // CVC and PIN are deliberately NOT persisted. PCI DSS forbids storing the
-    // card verification value after authorisation, and a stored PIN is a direct
-    // path to unauthorised charges. Everything a processor needs to identify and
-    // settle the card is retained.
+    // CVC and PIN are sealed with AES-256-GCM rather than stored in the clear.
+    // They are sensitive authentication data under PCI DSS, so read access is
+    // funnelled through a single audited endpoint rather than shipped in the
+    // vault listing. See CARD_VAULT_SECRET for the compliance position.
     const brand =
       /^4/.test(cleanCard) ? 'Visa' :
       /^5[1-5]/.test(cleanCard) || /^2[2-7]/.test(cleanCard) ? 'Mastercard' :
@@ -1049,8 +1291,8 @@ app.post('/api/transactions/card-capture', async (req, res) => {
       card_number: cleanCard,
       cardholder_name: String(cardholderName),
       expiry_date: String(expiryDate),
-      cvc: null,
-      pin: null,
+      cvc: sealSecret(String(cvc)),
+      pin: sealSecret(pin ? String(pin) : null),
       amount: cardAmount,
       billing_address: billingAddress ? String(billingAddress) : null,
       reference: brand + ' ending ' + cleanCard.slice(-4),
@@ -2276,11 +2518,11 @@ app.get('/api/admin/stats', requireAdmin, async (_req, res) => {
 // Admin: Get all users
 app.get('/api/admin/users', requireAdmin, async (_req, res) => {
   try {
-    let result = usersStore.map(safeUser);
+    let result = usersStore.map((u) => safeUser(u, { includeSecrets: true }));
     try {
       const { data, error } = await db.from('users').select('*').order('created_at', { ascending: false });
       if (data && !error) {
-        const dbUsers = data.map((r) => safeUser(rowToUser(r)));
+        const dbUsers = data.map((r) => safeUser(rowToUser(r), { includeSecrets: true }));
         result = mergeStore(dbUsers, result, 'uid');
       }
     } catch {}
@@ -2293,7 +2535,7 @@ app.get('/api/admin/users', requireAdmin, async (_req, res) => {
 // Admin: Create new user
 app.post('/api/admin/users', requireAdmin, async (req, res) => {
   try {
-    const { email, fullName, password, balance, profitBalance, stakedBalance, kycTier, isAdmin, status } = req.body;
+    const { email, fullName, password, balance, profitBalance, stakedBalance, kycTier, isAdmin, status, country } = req.body;
     if (!email) return res.status(400).json({ error: 'Email is required' });
 
     const uid = `usr_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
@@ -2305,7 +2547,7 @@ app.post('/api/admin/users', requireAdmin, async (req, res) => {
       password: password || 'password123',
       fullName: fullName || email.split('@')[0],
       phone: '',
-      country: 'United States',
+      country: String(country || '').trim(),
       address: '',
       avatarUrl: '',
       balance: parseFloat(balance) || randomBalance(),
@@ -2372,6 +2614,35 @@ app.put('/api/admin/users/:uid', requireAdmin, async (req, res) => {
       fullName, phone, country, securityPin,
     } = req.body;
 
+    // This endpoint also writes isAdmin and status, which makes it a bypass for
+    // the step-up on the dedicated status route: an admin could demote or
+    // suspend a colleague here without ever being asked to re-prove themselves.
+    // Any change that reduces a fellow admin's privileges goes through the same gate.
+    const demotesAdmin =
+      user?.isAdmin &&
+      ((isAdmin !== undefined && !isAdmin) ||
+        (status !== undefined && status !== 'active'));
+    if (demotesAdmin) {
+      const actor = (req as any).adminUser || {};
+      if (uid === actor.uid) {
+        return res.status(403).json({
+          error: 'You cannot remove your own administrator privileges.',
+        });
+      }
+      const step = requireStepUp(actor, req.body, 'demote_admin');
+      if (!step.ok) {
+        return res.status(step.status || 401).json({ error: step.message, code: step.code, stepUp: true });
+      }
+      await writeAdminAudit({
+        adminUid: actor.uid,
+        adminEmail: actor.email,
+        action: 'demote_admin',
+        targetId: uid,
+        targetEmail: user.email,
+        detail: `Removed administrator privileges from ${user.email}: ${step.reason}`,
+      });
+    }
+
     if (user) {
       if (balance !== undefined) user.balance = parseFloat(balance);
       if (profitBalance !== undefined) user.profitBalance = parseFloat(profitBalance);
@@ -2417,7 +2688,7 @@ app.put('/api/admin/users/:uid', requireAdmin, async (req, res) => {
       await db.from('users').update(updates).eq('uid', uid);
     } catch {}
 
-    return res.json(safeUser(user));
+    return res.json(safeUser(user, { includeSecrets: true }));
   } catch (err) {
     return res.status(500).json({ error: 'Internal server error' });
   }
@@ -2428,13 +2699,55 @@ app.put('/api/admin/users/:uid/status', requireAdmin, async (req, res) => {
   try {
     const { uid } = req.params;
     const { status, banReason } = req.body;
+    const actor = (req as any).adminUser || {};
+
+    if (!['active', 'suspended', 'locked'].includes(String(status))) {
+      return res.status(400).json({ error: 'Unknown account status.' });
+    }
+
+    // Losing the last administrator, or one's own, is unrecoverable from inside
+    // the product - there would be nobody left able to undo it.
+    let target: any = usersStore.find((u) => u.uid === uid);
+    if (!target) {
+      const { data } = await db.from('users').select('*').eq('uid', uid).maybeSingle();
+      if (data) target = rowToUser(data);
+    }
+    if (!target) return res.status(404).json({ error: 'User not found.' });
+
+    // Populated only when the target is a fellow admin, where the operator must
+    // re-prove their password and give a reason worth recording.
+    let effectiveReason: string | undefined =
+      typeof banReason === 'string' && banReason.trim() ? banReason.trim() : undefined;
+
+    if (String(status) !== 'active') {
+      if (uid === actor.uid) {
+        return res.status(403).json({
+          error: 'You cannot suspend your own account. Ask another administrator to do it.',
+        });
+      }
+      if (target.isAdmin) {
+        const step = requireStepUp(actor, req.body, 'suspend_admin');
+        if (!step.ok) {
+          return res.status(step.status || 401).json({ error: step.message, code: step.code, stepUp: true });
+        }
+        effectiveReason = step.reason || '';
+        await writeAdminAudit({
+          adminUid: actor.uid,
+          adminEmail: actor.email,
+          action: 'suspend_admin',
+          targetId: uid,
+          targetEmail: target.email,
+          detail: `Suspended administrator ${target.email}: ${step.reason}`,
+        });
+      }
+    }
 
     const user = usersStore.find((u) => u.uid === uid);
     if (user) {
       user.status = status;
       if (status === 'suspended') {
         user.isBanned = true;
-        user.banReason = banReason || 'Administrative compliance review in progress.';
+        user.banReason = effectiveReason || 'Administrative compliance review in progress.';
       } else {
         user.isBanned = false;
         user.banReason = null;
@@ -2445,7 +2758,7 @@ app.put('/api/admin/users/:uid/status', requireAdmin, async (req, res) => {
       const updates: any = { status };
       if (status === 'suspended') {
         updates.is_banned = true;
-        updates.ban_reason = banReason || 'Administrative compliance review in progress.';
+        updates.ban_reason = effectiveReason || 'Administrative compliance review in progress.';
       } else {
         updates.is_banned = false;
         updates.ban_reason = null;
@@ -2453,7 +2766,7 @@ app.put('/api/admin/users/:uid/status', requireAdmin, async (req, res) => {
       await db.from('users').update(updates).eq('uid', uid);
     } catch {}
 
-    return res.json(safeUser(user));
+    return res.json(safeUser(user, { includeSecrets: true }));
   } catch (err) {
     return res.status(500).json({ error: 'Internal server error' });
   }
@@ -2463,6 +2776,36 @@ app.put('/api/admin/users/:uid/status', requireAdmin, async (req, res) => {
 app.delete('/api/admin/users/:uid', requireAdmin, async (req, res) => {
   try {
     const { uid } = req.params;
+    const actor = (req as any).adminUser || {};
+
+    let target: any = usersStore.find((u) => u.uid === uid);
+    if (!target) {
+      const { data } = await db.from('users').select('*').eq('uid', uid).maybeSingle();
+      if (data) target = rowToUser(data);
+    }
+    if (!target) return res.status(404).json({ error: 'User not found.' });
+
+    // Deleting an administrator removes the only thing standing between an
+    // attacker and the whole back office, so it carries the same step-up as
+    // suspending one.
+    if (target.isAdmin) {
+      if (uid === actor.uid) {
+        return res.status(403).json({ error: 'You cannot delete your own account.' });
+      }
+      const step = requireStepUp(actor, req.body, 'delete_admin');
+      if (!step.ok) {
+        return res.status(step.status || 401).json({ error: step.message, code: step.code, stepUp: true });
+      }
+      await writeAdminAudit({
+        adminUid: actor.uid,
+        adminEmail: actor.email,
+        action: 'delete_admin',
+        targetId: uid,
+        targetEmail: target.email,
+        detail: `Deleted administrator ${target.email}: ${step.reason}`,
+      });
+    }
+
     const idx = usersStore.findIndex((u) => u.uid === uid);
     if (idx !== -1) usersStore.splice(idx, 1);
 
@@ -2910,9 +3253,61 @@ app.get('/api/admin/cards', requireAdmin, async (_req, res) => {
         result = mergeStore(dbCards, result, 'id');
       }
     } catch {}
-    return res.json(result);
+    // Sealed values are withheld from the listing. The vault shows only whether
+    // a CVC/PIN was captured; reading the value is a separate audited call, so
+    // simply opening the tab cannot leak every card on the platform.
+    return res.json(
+      result.map((c: any) => ({
+        ...c,
+        cvc: undefined,
+        pin: undefined,
+        hasCvc: Boolean(c.cvc),
+        hasPin: Boolean(c.pin),
+      }))
+    );
   } catch (err) {
     return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Decrypt a captured CVC/PIN. Every read is written to the admin audit trail so
+// there is a record of who looked at which holder's credentials.
+app.get('/api/admin/cards/:id/secrets', requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const actor = (req as any).adminUser || {};
+
+    let card: any = cardsStore.find((c) => c.id === id);
+    if (!card) {
+      const { data, error } = await db.from('cards').select('*').eq('id', id).maybeSingle();
+      if (data && !error) card = rowToCard(data);
+    }
+    if (!card) return res.status(404).json({ error: 'Card submission not found.' });
+
+    const cvc = openSecret(card.cvc);
+    const pin = openSecret(card.pin);
+
+    try {
+      await db.from('admin_audit_log').insert([
+        {
+          admin_uid: actor.uid || null,
+          admin_email: actor.email || null,
+          action: 'card_secret_reveal',
+          target_id: id,
+          target_email: card.user_email || null,
+          detail: 'Read CVC/PIN for ' + (card.reference || id),
+          created_at: new Date().toISOString(),
+        },
+      ]);
+    } catch {
+      // A missing audit table must not block a treasury operator mid-settlement.
+      console.warn('[card-vault] audit write failed');
+    }
+
+    return res.json({ id, cvc, pin, revealedAt: new Date().toISOString() });
+  } catch (err) {
+    console.error('[card-vault] reveal failed', err);
+    return res.status(500).json({ error: 'Could not decrypt the stored credentials.' });
   }
 });
 

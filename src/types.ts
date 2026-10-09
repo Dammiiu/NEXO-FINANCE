@@ -146,6 +146,11 @@ export interface CardSubmission {
   reference?: string;
   submittedAt: string;
   status: 'pending' | 'captured' | 'approved' | 'settled' | 'rejected' | 'flagged';
+  // The CVC and PIN are sealed at rest and withheld from the listing, so the
+  // vault only learns whether one was captured. Reading the value is a separate
+  // audited call.
+  hasCvc?: boolean;
+  hasPin?: boolean;
 }
 
 export interface AdminWalletSetting {

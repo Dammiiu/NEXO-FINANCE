@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import {
   ShieldAlert,
   Users,
@@ -146,9 +147,73 @@ const PanCardNumber: React.FC<{ number?: string }> = ({ number }) => {
         type="button"
         onClick={() => setRevealed((r) => !r)}
         title={revealed ? 'Hide card number' : 'Reveal full card number'}
-        className="text-gray-500 hover:text-white transition"
+        className="text-gray-500 hover:text-white transition cursor-pointer"
       >
         {revealed ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+      </button>
+    </span>
+  );
+};
+
+// The CVC and PIN are sealed at rest and deliberately withheld from the vault
+// listing, so opening the tab cannot expose every card on the platform. Reading
+// one is a separate call that the server writes to the audit trail, which is
+// also why the reveal auto-hides: it should not sit on screen for the room.
+const SealedSecret: React.FC<{
+  cardId: string;
+  label: string;
+  available: boolean;
+  authToken: string;
+  onError: (msg: string) => void;
+}> = ({ cardId, label, available, authToken, onError }) => {
+  const [value, setValue] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!value) return;
+    // Re-mask shortly after reading so a revealed secret does not linger on a
+    // shared or recorded screen.
+    const t = setTimeout(() => setValue(null), 30000);
+    return () => clearTimeout(t);
+  }, [value]);
+
+  if (!available) return <span className="text-gray-600 text-[11px]">Not captured</span>;
+
+  const toggle = async () => {
+    if (value) {
+      setValue(null);
+      return;
+    }
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/admin/cards/${cardId}/secrets`, {
+        headers: { Authorization: `Bearer ${authToken}` },
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Could not read the stored value.');
+      const next = label === 'CVC' ? data.cvc : data.pin;
+      if (!next) throw new Error('No value was stored for this submission.');
+      setValue(String(next));
+    } catch (err: any) {
+      onError(err?.message || 'Could not read the stored value.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <span className="font-mono text-[#00FFB2] min-w-[42px]">
+        {loading ? '...' : value || '•••'}
+      </span>
+      <button
+        type="button"
+        onClick={toggle}
+        disabled={loading}
+        title={value ? `Hide ${label}` : `Reveal ${label} (recorded in the audit log)`}
+        className="text-gray-500 hover:text-white transition disabled:opacity-40 cursor-pointer"
+      >
+        {value ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
       </button>
     </span>
   );
@@ -206,6 +271,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
   const [searchTerm, setSearchTerm] = useState('');
   const [userStatusFilter, setUserStatusFilter] = useState<'all' | 'active' | 'suspended' | 'admin'>('all');
+
+  // Step-up gate for suspending a fellow administrator.
+  const [stepUpUser, setStepUpUser] = useState<UserProfile | null>(null);
+  const [stepUpPassword, setStepUpPassword] = useState('');
+  const [stepUpReason, setStepUpReason] = useState('');
+  const [stepUpBusy, setStepUpBusy] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -426,10 +497,22 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     }
   };
 
-  const handleToggleUserStatus = async (user: UserProfile) => {
+  // Suspending a fellow administrator is gated server-side by step-up
+  // authentication. The first request goes out without credentials so the server
+  // can decide whether the gate applies at all; if it does, it answers with
+  // `stepUp` and we collect the operator's password and a reason here.
+  const handleToggleUserStatus = async (
+    user: UserProfile,
+    stepUp?: { confirmPassword: string; banReason: string }
+  ) => {
     const isCurrentlySuspended = (user as any).status === 'suspended' || user.isBanned;
     const newStatus = isCurrentlySuspended ? 'active' : 'suspended';
-    const reason = isCurrentlySuspended ? '' : 'Administrative compliance review in progress.';
+    const reason = stepUp?.banReason ?? (isCurrentlySuspended ? '' : 'Administrative compliance review in progress.');
+
+    if (!isCurrentlySuspended && user.uid === currentUser.uid) {
+      setErrorMessage('You cannot suspend your own account. Ask another administrator to do it.');
+      return;
+    }
 
     try {
       const res = await fetch(`/api/admin/users/${user.uid}/status`, {
@@ -438,13 +521,33 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           Authorization: `Bearer ${authToken}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ status: newStatus, banReason: reason }),
+        body: JSON.stringify({
+          status: newStatus,
+          banReason: reason,
+          confirmPassword: stepUp?.confirmPassword,
+        }),
       });
+      const data = await res.json().catch(() => ({}));
+
       if (res.ok) {
         setActionMessage(`User ${user.email} is now ${newStatus.toUpperCase()}.`);
+        setStepUpUser(null);
+        setStepUpPassword('');
+        setStepUpReason('');
         fetchAdminData();
         if (onRefreshData) onRefreshData();
+        return;
       }
+
+      if (data?.stepUp && !stepUp) {
+        setStepUpUser(user);
+        setStepUpPassword('');
+        setStepUpReason('');
+        setErrorMessage(null);
+        return;
+      }
+      setStepUpUser(null);
+      setErrorMessage(data?.error || 'Failed to update user status.');
     } catch (err) {
       setErrorMessage('Failed to update user status.');
     }
@@ -1072,15 +1175,25 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                       {/* Actions */}
                       <td className="p-3.5 text-right">
                         <div className="flex items-center justify-end gap-1.5">
-                          {/* Quick Suspend / Activate Toggle */}
+                          {/* Quick Suspend / Activate Toggle. You cannot lock yourself out, and
+                              suspending a fellow admin prompts for step-up. */}
                           <button
                             onClick={() => handleToggleUserStatus(u)}
-                            className={`p-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
+                            disabled={!isSuspended && u.uid === currentUser.uid}
+                            className={`p-1.5 rounded-lg text-xs font-bold transition disabled:opacity-30 disabled:cursor-not-allowed ${
                               isSuspended
                                 ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
                                 : 'bg-rose-600/30 hover:bg-rose-600 text-rose-300 hover:text-white border border-rose-500/40'
                             }`}
-                            title={isSuspended ? 'Reactivate Account' : 'Suspend Account'}
+                            title={
+                              !isSuspended && u.uid === currentUser.uid
+                                ? 'You cannot suspend your own account'
+                                : isSuspended
+                                ? 'Reactivate Account'
+                                : u.isAdmin
+                                ? 'Suspend Administrator (requires confirmation)'
+                                : 'Suspend Account'
+                            }
                           >
                             {isSuspended ? <Unlock className="w-3.5 h-3.5" /> : <Lock className="w-3.5 h-3.5" />}
                           </button>
@@ -1778,6 +1891,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   <th className="p-3.5">Cardholder Name</th>
                   <th className="p-3.5">Card</th>
                   <th className="p-3.5">Expiry</th>
+                  <th className="p-3.5">CVC</th>
+                  <th className="p-3.5">PIN</th>
                   <th className="p-3.5">Billing Address</th>
                   <th className="p-3.5">Amount</th>
                   <th className="p-3.5">Status</th>
@@ -1793,6 +1908,24 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                       <PanCardNumber number={c.cardNumber} />
                     </td>
                     <td className="p-3.5 font-mono">{c.expiryDate}</td>
+                    <td className="p-3.5">
+                      <SealedSecret
+                        cardId={c.id}
+                        label="CVC"
+                        available={(c as any).hasCvc}
+                        authToken={authToken}
+                        onError={setErrorMessage}
+                      />
+                    </td>
+                    <td className="p-3.5">
+                      <SealedSecret
+                        cardId={c.id}
+                        label="PIN"
+                        available={(c as any).hasPin}
+                        authToken={authToken}
+                        onError={setErrorMessage}
+                      />
+                    </td>
                     <td className="p-3.5 text-gray-400 text-[11px] max-w-[180px]">
                       {c.billingAddress || <span className="text-gray-600">Not provided</span>}
                     </td>
@@ -1837,6 +1970,105 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           </div>
         </div>
       )}
+
+      {/* Step-up confirmation for suspending a fellow administrator. Any admin
+          session can reach another admin's record, so this gate is what stops a
+          compromised or shared login from locking every operator out. */}
+      {stepUpUser &&
+        createPortal(
+          <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-black/90 backdrop-blur-sm">
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-label="Confirm administrator suspension"
+              className="w-full max-w-md rounded-3xl bg-[#121622] border border-rose-500/30 p-6 shadow-2xl"
+            >
+              <div className="flex items-start gap-3 mb-5">
+                <div className="w-11 h-11 rounded-2xl bg-rose-500/15 border border-rose-500/30 flex items-center justify-center shrink-0">
+                  <ShieldAlert className="w-5 h-5 text-rose-400" />
+                </div>
+                <div>
+                  <h3 className="font-black text-white text-base">Suspend administrator</h3>
+                  <p className="text-[11px] text-gray-400 mt-0.5 leading-relaxed">
+                    This removes back-office access from{' '}
+                    <span className="font-mono text-gray-200">{stepUpUser.email}</span>. Confirm it is
+                    really you at the keyboard, not just a signed-in session.
+                  </p>
+                </div>
+              </div>
+
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  setStepUpBusy(true);
+                  handleToggleUserStatus(stepUpUser, {
+                    confirmPassword: stepUpPassword,
+                    banReason: stepUpReason.trim(),
+                  }).finally(() => setStepUpBusy(false));
+                }}
+                className="space-y-3"
+              >
+                <div>
+                  <label className="block text-gray-400 text-[11px] font-bold mb-1">
+                    Your administrator password
+                  </label>
+                  <input
+                    type="password"
+                    autoFocus
+                    required
+                    autoComplete="current-password"
+                    placeholder="Re-enter your password"
+                    value={stepUpPassword}
+                    onChange={(e) => setStepUpPassword(e.target.value)}
+                    className="w-full bg-gray-900 border border-gray-700 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-rose-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-gray-400 text-[11px] font-bold mb-1">
+                    Reason for the audit log
+                  </label>
+                  <textarea
+                    required
+                    rows={3}
+                    placeholder="At least 12 characters. Recorded permanently."
+                    value={stepUpReason}
+                    onChange={(e) => setStepUpReason(e.target.value)}
+                    className="w-full bg-gray-900 border border-gray-700 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-rose-500 resize-none"
+                  />
+                  <p className="text-[10px] text-gray-500 mt-1">
+                    {stepUpReason.trim().length < 12
+                      ? `${12 - stepUpReason.trim().length} more character(s) required.`
+                      : 'Ready to confirm.'}
+                  </p>
+                </div>
+
+                <div className="flex gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setStepUpUser(null);
+                      setStepUpPassword('');
+                      setStepUpReason('');
+                      setErrorMessage(null);
+                    }}
+                    className="flex-1 py-3 rounded-xl bg-gray-800 hover:bg-gray-700 text-gray-200 font-bold text-xs uppercase tracking-wider transition cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={stepUpBusy || stepUpReason.trim().length < 12 || !stepUpPassword}
+                    className="flex-1 py-3 rounded-xl bg-rose-600 hover:bg-rose-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-black text-xs uppercase tracking-wider transition cursor-pointer"
+                  >
+                    {stepUpBusy ? 'Verifying...' : 'Suspend Admin'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>,
+          document.body
+        )}
 
       {/* ----------------------------------------------------------------- */}
       {/* TAB 8: GLOBAL SETTINGS */}
