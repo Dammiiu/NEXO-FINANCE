@@ -502,61 +502,139 @@ const rowToTrade = (r: any) => ({
 // ── Auth Helper (Robust Dual-Layer) ──────────────────────────────────────────
 // token_{uid}_{epochMs} - uid itself contains underscores, so anchor on the
 // trailing numeric timestamp rather than the first underscore.
-const TOKEN_RE = /^token_(.+)_\d+$/;
+// ── Session Tokens ───────────────────────────────────────────────────────────
+// A session token used to be `token_{uid}_{timestamp}` with no signature, so
+// anyone who learned a uid could mint one and become that user - including an
+// administrator. That made the step-up protection on admin accounts
+// meaningless, because an attacker never had to go through the console at all.
+//
+// Tokens are now HMAC-SHA256 signed and time-limited:
+//   token.{uid}.{expiresAtMs}.{signature}
+// The signature covers both the uid and the expiry, so neither the subject nor
+// the lifetime can be altered by the holder.
+//
+// Dot separators rather than underscores: the uid contains underscores
+// (usr_<epochMs>_<rand>) and the base64url signature can too, so an underscore
+// format cannot be split unambiguously. Neither part can contain a dot.
+//
+// AUTH_TOKEN_SECRET should be a dedicated random value in Render. It falls back
+// to the Supabase service key so the platform still boots, with a warning,
+// rather than locking the operator out of their own deployment.
+const AUTH_TOKEN_SECRET = process.env.AUTH_TOKEN_SECRET;
+const TOKEN_SIGNING_KEY = AUTH_TOKEN_SECRET
+  ? Buffer.from(AUTH_TOKEN_SECRET, 'utf8')
+  : Buffer.from(SUPABASE_SERVICE_KEY, 'utf8');
+
+if (!AUTH_TOKEN_SECRET) {
+  console.warn(
+    '[auth] AUTH_TOKEN_SECRET is not set - deriving the session signing key from the Supabase service key. Set a dedicated secret in Render.'
+  );
+}
+
+const TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+const TOKEN_RE = /^token\.([^.]+)\.(\d+)\.([A-Za-z0-9_-]{16,})$/;
+
+const tokenSignature = (uid: string, expiresAt: number) =>
+  crypto
+    .createHmac('sha256', TOKEN_SIGNING_KEY)
+    .update(`${uid}.${expiresAt}`)
+    .digest('base64url')
+    .slice(0, 43);
+
+const signToken = (uid: string, ttlMs: number = TOKEN_TTL_MS) => {
+  const expiresAt = Date.now() + ttlMs;
+  return `token.${uid}.${expiresAt}.${tokenSignature(uid, expiresAt)}`;
+};
+
+// Returns the uid, or null. Every failure path is the same null: a caller must
+// not be able to tell "wrong signature" from "expired" from "malformed".
+const verifyToken = (token: string): { uid: string } | null => {
+  const m = token.match(TOKEN_RE);
+  if (!m) return null;
+  const [, uid, expiresAtRaw, sig] = m;
+  const expiresAt = Number(expiresAtRaw);
+  if (!Number.isFinite(expiresAt)) return null;
+
+  const a = Buffer.from(sig);
+  const b = Buffer.from(tokenSignature(uid, expiresAt));
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
+  if (Date.now() > expiresAt) return null;
+
+  return { uid };
+};
 
 const getAuthUser = async (req: express.Request) => {
   const authHeader = req.headers.authorization || '';
   const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader;
   if (!token) return null;
 
-  // 1. Support institutional investor token
-  if (token === 'demo-jwt-token-institutional' || token.startsWith('token_usr_institutional_01')) {
-    try {
-      const { data } = await db.from('users').select('*').eq('uid', 'usr_institutional_01').single();
-      if (data) return rowToUser(data);
-    } catch {}
-    return usersStore.find((u) => u.uid === 'usr_institutional_01') || null;
-  }
+  // Signature and expiry are checked before the uid is even looked at. There is
+  // deliberately no demo token and no substring fallback any more: both were
+  // ways to authenticate as someone without proving who you are.
+  const verified = verifyToken(token);
+  if (!verified) return null;
 
-  // 2. Extract UID from standard token format: token_{uid}_{timestamp}
-  // Tokens are `token_{uid}_{epochMs}` and the uid itself contains underscores
-  // (e.g. usr_1770000000000_a1b2). Matching only up to the first underscore
-  // swallowed the timestamp, so we looked up a uid that does not exist and
-  // every non-seeded account got 401 straight after login. Anchor on the
-  // trailing numeric timestamp instead.
-  const match = token.match(TOKEN_RE);
-  const uid = match ? match[1] : (token.startsWith('usr_') ? token : null);
-
-  if (uid) {
-    try {
-      const { data, error } = await db.from('users').select('*').eq('uid', uid).single();
-      if (data && !error) return rowToUser(data);
-    } catch {}
-    const localUser = usersStore.find((u) => u.uid === uid);
-    if (localUser) return localUser;
-  }
-
-  // 3. Fallback: match by token containing uid or email
-  const found = usersStore.find((u) => token.includes(u.uid) || (u.email && token.includes(u.email)));
-  return found || null;
+  const uid = verified.uid;
+  try {
+    const { data, error } = await db.from('users').select('*').eq('uid', uid).single();
+    if (data && !error) return rowToUser(data);
+  } catch {}
+  return usersStore.find((u) => u.uid === uid) || null;
 };
 
 // A stripped backslash in that regex once shipped as _d+$ instead of _\d+$,
 // which silently matched no uid and logged every non-admin out. Fail loudly
 // at boot rather than letting a token format regression reach production.
+// A stripped backslash in that regex once shipped as _d+$ instead of _\d+$,
+// which silently matched no uid and logged every non-admin out. Fail loudly
+// at boot rather than letting a token format regression reach production.
+//
+// The signing half matters more: a regex can pass this test while the
+// signature check accepts a forged token, which would reintroduce the exact
+// vulnerability the signing was added to close.
 const TOKEN_REGEX_SELF_TEST = (() => {
-  const samples = [
-    ['token_usr_institutional_01_1770000000000', 'usr_institutional_01'],
-    ['token_usr_1770000000000_a1b2_1770000000123', 'usr_1770000000000_a1b2'],
-  ];
-  for (const [token, expected] of samples) {
-    const got = (token.match(TOKEN_RE) || [])[1];
-    if (got !== expected) {
-      console.error('FATAL: token regex is broken. Expected uid for ' + token +
-        ' to be ' + expected + ' but got ' + JSON.stringify(got));
-      process.exit(1);
-    }
+  const fail = (msg: string) => {
+    console.error('FATAL: ' + msg);
+    process.exit(1);
+  };
+
+  const sampleUid = 'usr_1770000000000_a1b2';
+  const good = signToken(sampleUid);
+  if (verifyToken(good)?.uid !== sampleUid) {
+    fail('a freshly signed token did not verify. Session tokens are broken.');
   }
+
+  // The attack this exists to stop: a hand-built token naming someone else's uid.
+  const forged = `token.${sampleUid}.${Date.now() + 86400000}.${'A'.repeat(43)}`;
+  if (verifyToken(forged)) {
+    fail('an unsigned token was accepted. Anyone could impersonate any account.');
+  }
+
+  // Swapping the uid but keeping a valid signature must fail.
+  const swapped = good.replace(sampleUid, 'usr_1000000000000_zzzz');
+  if (verifyToken(swapped)) {
+    fail('a token verified after its uid was altered.');
+  }
+
+  // Extending the expiry must fail: the expiry is inside the signed payload.
+  const parts = good.split('.');
+  const bumped = `${parts[0]}.${parts[1]}.${Number(parts[2]) + 86400000}.${parts[3]}`;
+  if (verifyToken(bumped)) {
+    fail('a token verified after its expiry was extended.');
+  }
+
+  // The old unsigned format must no longer authenticate anyone.
+  const legacy = `token_${sampleUid}_${Date.now() + 86400000}`;
+  if (verifyToken(legacy)) {
+    fail('a legacy unsigned token was accepted.');
+  }
+
+  // An already-expired token must fail.
+  if (verifyToken(signToken(sampleUid, -1000))) {
+    fail('an expired token was accepted.');
+  }
+
   return true;
 })();
 
@@ -793,7 +871,7 @@ app.post('/api/auth/register', async (req, res) => {
       }]);
     } catch {}
 
-    const token = `token_${uid}_${Date.now()}`;
+    const token = signToken(uid);
     return res.status(201).json({ token, user: safeUser(newUserObj) });
   } catch (err) {
     console.error('Register exception:', err);
@@ -837,7 +915,7 @@ app.post('/api/auth/login', async (req, res) => {
       });
     }
 
-    const token = `token_${user.uid}_${Date.now()}`;
+    const token = signToken(user.uid);
     return res.json({ token, user: safeUser(user) });
   } catch (err) {
     console.error('Login exception:', err);
@@ -877,7 +955,7 @@ app.post('/api/auth/google', async (req, res) => {
       if (picture && !existingUser.avatarUrl) existingUser.avatarUrl = picture;
       if (sub && !existingUser.googleSub) existingUser.googleSub = sub;
 
-      const token = `token_${existingUser.uid}_${Date.now()}`;
+      const token = signToken(existingUser.uid);
       return res.json({ token, user: safeUser(existingUser), isNewUser: false });
     }
 
@@ -941,7 +1019,7 @@ app.post('/api/auth/google', async (req, res) => {
       }]);
     } catch {}
 
-    const token = `token_${uid}_${Date.now()}`;
+    const token = signToken(uid);
     return res.status(201).json({ token, user: safeUser(newUserObj), isNewUser: true });
   } catch (err) {
     console.error('Google auth exception:', err);
