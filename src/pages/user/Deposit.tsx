@@ -617,10 +617,6 @@ export const Deposit: React.FC<DepositProps> = ({
     <div className="space-y-8 animate-fade-in">
       {/* Header */}
       <div>
-        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-bold bg-emerald-500/10 text-emerald-700 dark:text-[#00FFB2] border border-emerald-500/30 dark:border-[#00FFB2]/20 mb-2">
-          <ArrowDownLeft className="w-3.5 h-3.5" />
-          <span>Multi-Gateway Payment Center</span>
-        </div>
         <h2 className="text-2xl md:text-3xl font-black text-slate-900 dark:text-white tracking-tight">
           Deposit Capital & Funding Gateways
         </h2>

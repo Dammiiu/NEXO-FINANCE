@@ -857,7 +857,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         <div>
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-black bg-rose-500/10 text-rose-400 border border-rose-500/20 mb-2 uppercase tracking-wider">
             <ShieldAlert className="w-3.5 h-3.5" />
-            <span>Nexo Multi-Sig Audit Center • Admin Console</span>
+            <span>Admin Console</span>
           </div>
           <h2 className="text-2xl font-black tracking-tight text-white flex items-center gap-2">
             Institutional Backoffice & User Ledger Management

@@ -133,6 +133,22 @@ const INVESTMENT_PLANS = [
     popular: true,
   },
   {
+    id: 'prime',
+    name: 'Prime Plan',
+    profit: '60.00',
+    dailyProfitPercent: 60.0,
+    min: '3,000',
+    minDepositUsd: 3000,
+    max: '4,999',
+    maxDepositUsd: 4999,
+    days: '10 days lockup',
+    durationDays: 10,
+    badge: 'BEST RETURN',
+    desc: 'Our highest-yielding tier. Built for capital that can sit for ten days.',
+    features: ['Highest daily rate on the platform', 'Priority liquidity-node allocation', 'Guaranteed principal on maturity', 'Dedicated relationship manager'],
+    popular: false,
+  },
+  {
     id: 'executive',
     name: 'Executive Plan',
     profit: '40.00',
@@ -355,8 +371,12 @@ const rowToUser = (r: any) => ({
 const safeUser = (u: any, opts: { includeSecrets?: boolean } = {}) => {
   if (!u) return null;
   const { password, googleSub, securityPin, ...safe } = u;
-  if (opts.includeSecrets) return { ...safe, securityPin: securityPin || '' };
-  return safe;
+  // Whether a password exists is not a secret, and the client needs it: a
+  // Google-only account has no password to confirm, so the security form has
+  // to hide the current-password field rather than dead-end the user.
+  const base = { ...safe, hasPassword: Boolean(password) };
+  if (opts.includeSecrets) return { ...base, securityPin: securityPin || '' };
+  return base;
 };
 
 const rowToTx = (r: any) => ({
@@ -1014,18 +1034,24 @@ app.put('/api/user/security', async (req, res) => {
 
     // 2FA is optional, so it may be toggled on its own. Anything that changes a
     // credential demands the current password.
-    if (wantsNewPassword || wantsNewPin) {
+    //
+    // Exception: an account created through Google has no password at all.
+    // Requiring a current password there is impossible, which previously left
+    // those users unable to ever set one. They may claim a password once; from
+    // then on the normal current-password rule applies.
+    const isFirstPassword = !user.password && wantsNewPassword;
+
+    if ((wantsNewPassword || wantsNewPin) && !isFirstPassword) {
       if (!oldPassword) {
         return res.status(400).json({ error: 'Your current password is required to change a credential.' });
-      }
-      // Google-only accounts have no password to compare against, so possession
-      // of a password-less account cannot be re-proven here.
-      if (!user.password) {
-        return res.status(400).json({ error: 'This account signs in with Google, so it has no password to change.' });
       }
       if (user.password !== oldPassword) {
         return res.status(401).json({ error: 'Your current password is incorrect.' });
       }
+    }
+
+    if (isFirstPassword && newPassword.length < 8) {
+      return res.status(400).json({ error: 'Your new password must be at least 8 characters.' });
     }
 
     if (wantsNewPassword && newPassword.length < 8) {
@@ -1856,7 +1882,12 @@ app.post('/api/investments/claim/:id', async (req, res) => {
     investment.lastClaimDate = new Date().toISOString();
     if (now >= end) investment.status = 'completed';
 
-    user.profitBalance = (user.profitBalance || 0) + claimable;
+    // Credit the liquid balance, not profit_balance. profit_balance is a
+    // reporting field only: withdrawals and trades both read `balance`, so
+    // claiming into profit_balance left the money credited to an account the
+    // user could neither spend nor withdraw.
+    const priorBalance = parseFloat(user.balance) || 0;
+    user.balance = priorBalance + claimable;
 
     const profitTx = {
       id: genId('tx_profit'),
@@ -1872,13 +1903,16 @@ app.post('/api/investments/claim/:id', async (req, res) => {
     };
     transactionsStore.unshift(profitTx);
 
+    // DB first. Reporting success while the write silently failed meant a
+    // Render recycle reverted the credit and the user lost the yield with no
+    // way to claim it again.
     try {
       await db.from('active_investments').update({
         total_claimed: investment.totalClaimed,
         last_claim_date: investment.lastClaimDate,
         status: investment.status,
       }).eq('id', id);
-      await db.from('users').update({ profit_balance: user.profitBalance }).eq('uid', user.uid);
+      await db.from('users').update({ balance: user.balance }).eq('uid', user.uid);
       await db.from('transactions').insert([{
         id: profitTx.id,
         user_id: user.uid,
@@ -1890,9 +1924,22 @@ app.post('/api/investments/claim/:id', async (req, res) => {
         status: 'approved',
         details: profitTx.details,
       }]);
-    } catch {}
+    } catch (err) {
+      console.error('[claim] persist failed', err);
+      // Roll the in-memory state back so the retry is not blocked by a
+      // totalClaimed that already looks settled.
+      investment.totalClaimed -= claimable;
+      user.balance = priorBalance;
+      const i = transactionsStore.findIndex((t) => t.id === profitTx.id);
+      if (i !== -1) transactionsStore.splice(i, 1);
+      return res.status(500).json({ error: 'Could not credit your balance. Please try again.' });
+    }
 
-    return res.json({ message: `Successfully claimed $${claimable.toFixed(2)} in profit.`, claimedAmount: claimable });
+    return res.json({
+      message: `Successfully claimed $${claimable.toFixed(2)} in profit.`,
+      claimedAmount: claimable,
+      balance: user.balance,
+    });
   } catch (err) {
     return res.status(500).json({ error: 'Internal server error' });
   }

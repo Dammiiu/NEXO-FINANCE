@@ -32,6 +32,9 @@ export interface UserProfile {
   hasDepositedMinimum: boolean;
   withdrawalFeePaid: boolean;
   twoFactorEnabled: boolean;
+  // False for accounts created through Google: there is no password to
+  // confirm, so the security form hides the current-password field.
+  hasPassword?: boolean;
   antiPhishingCode?: string;
   referralCode: string;
   referredBy?: string;

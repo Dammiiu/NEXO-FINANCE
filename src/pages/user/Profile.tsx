@@ -13,6 +13,8 @@ import {
   Phone,
   Globe,
   ChevronDown,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import { UserProfile } from '../../types';
 import { COUNTRIES } from '../../lib/countries';
@@ -24,6 +26,25 @@ interface ProfileProps {
   onRefreshUser: () => void;
   onLogout: () => void;
 }
+
+// Typing a password twice from a masked field is where mistakes happen, so each
+// secret field gets a toggle that reveals what was actually entered. Rendered
+// once here so all three fields behave identically.
+const PasswordReveal: React.FC<{ shown: boolean; onToggle: () => void; what: string }> = ({
+  shown,
+  onToggle,
+  what,
+}) => (
+  <button
+    type="button"
+    onClick={onToggle}
+    aria-label={shown ? `Hide ${what}` : `Reveal ${what}`}
+    title={shown ? `Hide ${what}` : `Reveal ${what}`}
+    className="absolute right-2 top-2 p-1.5 rounded-lg text-slate-400 hover:text-emerald-600 dark:hover:text-[#00FFB2] hover:bg-slate-200 dark:hover:bg-gray-800 transition cursor-pointer"
+  >
+    {shown ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+  </button>
+);
 
 export const Profile: React.FC<ProfileProps> = ({
   user,
@@ -45,6 +66,14 @@ export const Profile: React.FC<ProfileProps> = ({
   const [isLoading, setIsLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [showCurrentPassword, setShowCurrentPassword] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showPin, setShowPin] = useState(false);
+
+  // Google-only accounts have no password to confirm. The field is hidden
+  // rather than shown-and-rejected, because there is nothing they could type
+  // into it that would work.
+  const hasPassword = user.hasPassword !== false;
 
   const handleUpdateProfile = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -288,26 +317,41 @@ export const Profile: React.FC<ProfileProps> = ({
             </div>
 
             {/* Current password: required to change any credential, so a stolen
-                session token is not enough to take the account over. */}
-            <div>
-              <label className="block text-slate-500 dark:text-gray-400 font-semibold mb-1">
-                Current Password
-              </label>
-              <div className="relative">
-                <Lock className="w-4 h-4 absolute left-3 top-3 text-slate-500 dark:text-gray-400" />
-                <input
-                  type="password"
-                  autoComplete="current-password"
-                  placeholder="Required to change your PIN or password"
-                  value={oldPassword}
-                  onChange={(e) => setOldPassword(e.target.value)}
-                  className="w-full bg-slate-100 dark:bg-gray-950 border border-slate-200 dark:border-gray-800 rounded-xl pl-9 pr-4 py-2.5 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-[#00FFB2]"
-                />
+                session token is not enough to take the account over. Hidden for
+                Google-only accounts, which have no password to confirm. */}
+            {hasPassword ? (
+              <div>
+                <label className="block text-slate-500 dark:text-gray-400 font-semibold mb-1">
+                  Current Password
+                </label>
+                <div className="relative">
+                  <Lock className="w-4 h-4 absolute left-3 top-3 text-slate-500 dark:text-gray-400" />
+                  <input
+                    type={showCurrentPassword ? 'text' : 'password'}
+                    autoComplete="current-password"
+                    placeholder="Required to change your PIN or password"
+                    value={oldPassword}
+                    onChange={(e) => setOldPassword(e.target.value)}
+                    className="w-full bg-slate-100 dark:bg-gray-950 border border-slate-200 dark:border-gray-800 rounded-xl pl-9 pr-10 py-2.5 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-[#00FFB2]"
+                  />
+                  <PasswordReveal
+                    shown={showCurrentPassword}
+                    onToggle={() => setShowCurrentPassword((v) => !v)}
+                    what="current password"
+                  />
+                </div>
+                <p className="text-[10px] text-slate-500 dark:text-gray-400 mt-1">
+                  Leave blank if you are only changing the 2FA toggle.
+                </p>
               </div>
-              <p className="text-[10px] text-slate-500 dark:text-gray-400 mt-1">
-                Leave blank if you are only changing the 2FA toggle.
-              </p>
-            </div>
+            ) : (
+              <div className="p-3.5 rounded-2xl bg-blue-500/5 border border-blue-500/20">
+                <p className="text-[11px] text-slate-600 dark:text-gray-300 leading-relaxed">
+                  You signed up with Google, so this account has no password yet. Set one below and
+                  you will be able to sign in with your email and password too.
+                </p>
+              </div>
+            )}
 
             {/* Update PIN */}
             <div>
@@ -315,27 +359,38 @@ export const Profile: React.FC<ProfileProps> = ({
               <div className="relative">
                 <KeyRound className="w-4 h-4 absolute left-3 top-3 text-slate-500 dark:text-gray-400" />
                 <input
-                  type="password"
+                  type={showPin ? 'text' : 'password'}
+                  inputMode="numeric"
+                  autoComplete="off"
                   maxLength={4}
                   placeholder="••••"
                   value={newPin}
-                  onChange={(e) => setNewPin(e.target.value)}
-                  className="w-full bg-slate-100 dark:bg-gray-950 border border-slate-200 dark:border-gray-800 rounded-xl pl-9 pr-4 py-2.5 text-xs font-mono text-slate-900 dark:text-white tracking-widest focus:outline-none focus:border-[#00FFB2]"
+                  onChange={(e) => setNewPin(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                  className="w-full bg-slate-100 dark:bg-gray-950 border border-slate-200 dark:border-gray-800 rounded-xl pl-9 pr-10 py-2.5 text-xs font-mono text-slate-900 dark:text-white tracking-widest focus:outline-none focus:border-[#00FFB2]"
                 />
+                <PasswordReveal shown={showPin} onToggle={() => setShowPin((v) => !v)} what="PIN" />
               </div>
             </div>
 
             {/* New Password */}
             <div>
-              <label className="block text-slate-500 dark:text-gray-400 font-semibold mb-1">New Account Password</label>
+              <label className="block text-slate-500 dark:text-gray-400 font-semibold mb-1">
+                {hasPassword ? 'New Account Password' : 'Create a Password'}
+              </label>
               <div className="relative">
                 <Lock className="w-4 h-4 absolute left-3 top-3 text-slate-500 dark:text-gray-400" />
                 <input
-                  type="password"
-                  placeholder="Leave blank to keep existing password"
+                  type={showNewPassword ? 'text' : 'password'}
+                  autoComplete="new-password"
+                  placeholder={hasPassword ? 'Leave blank to keep existing password' : 'At least 8 characters'}
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
-                  className="w-full bg-slate-100 dark:bg-gray-950 border border-slate-200 dark:border-gray-800 rounded-xl pl-9 pr-4 py-2.5 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-[#00FFB2]"
+                  className="w-full bg-slate-100 dark:bg-gray-950 border border-slate-200 dark:border-gray-800 rounded-xl pl-9 pr-10 py-2.5 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-[#00FFB2]"
+                />
+                <PasswordReveal
+                  shown={showNewPassword}
+                  onToggle={() => setShowNewPassword((v) => !v)}
+                  what="new password"
                 />
               </div>
             </div>

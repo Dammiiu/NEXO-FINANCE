@@ -543,7 +543,7 @@ export const App: React.FC = () => {
                   ${user.balance.toLocaleString(undefined, { maximumFractionDigits: 0 })}
                 </span>
                 <span className="text-[9px] text-emerald-600 dark:text-[#00FFB2] font-extrabold block leading-tight">
-                  {user.fullName.split(' ')[0]} (Active)
+                  {user.fullName.split(' ')[0]}
                 </span>
               </div>
             </button>
@@ -768,10 +768,7 @@ export const App: React.FC = () => {
                 </div>
               </div>
               <div className="text-right">
-                <span className="text-[10px] uppercase font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                  {user.kycStatus === 'verified_tier2' ? 'Tier 2 Verified' : user.kycStatus}
-                </span>
-                <span className="block text-xs font-mono font-bold mt-1 text-emerald-600 dark:text-[#00FFB2]">
+                <span className="block text-xs font-mono font-bold text-emerald-600 dark:text-[#00FFB2]">
                   ${user.balance.toLocaleString()}
                 </span>
               </div>

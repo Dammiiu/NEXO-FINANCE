@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Star, ShieldCheck, Heart, Plus, ExternalLink, X, Award, CheckCircle2 } from 'lucide-react';
 import { TestimonialItem } from '../types';
 
@@ -190,6 +190,27 @@ export const Testimonials: React.FC<{ theme?: 'dark' | 'light' }> = ({ theme = '
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [showSuccessToast, setShowSuccessToast] = useState(false);
 
+  // Bumped on a 10-20s cycle. It only ever seeds a shuffle, so the grid content
+  // genuinely changes between refreshes without the component re-fetching or
+  // the reviewer list shifting underneath a reader who is mid-way through one.
+  const [rotationSeed, setRotationSeed] = useState<number>(() => Date.now());
+
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout>;
+
+    const schedule = () => {
+      // 10-20 seconds, so the page never looks like it is on a fixed loop.
+      const delay = 10000 + Math.floor(Math.random() * 10000);
+      timer = setTimeout(() => {
+        setRotationSeed(Date.now());
+        schedule();
+      }, delay);
+    };
+
+    schedule();
+    return () => clearTimeout(timer);
+  }, []);
+
   // Modal Form State
   const [name, setName] = useState('');
   const [role, setRole] = useState('');
@@ -261,10 +282,31 @@ export const Testimonials: React.FC<{ theme?: 'dark' | 'light' }> = ({ theme = '
     }, 1500);
   };
 
-  const filteredList =
-    activeCategory === 'all'
-      ? testimonials
-      : testimonials.filter((t) => t.category === activeCategory);
+  const sourceList = useMemo(
+    () =>
+      activeCategory === 'all'
+        ? testimonials
+        : testimonials.filter((t) => t.category === activeCategory),
+    [testimonials, activeCategory]
+  );
+
+  // Shuffle against rotationSeed on every rotation tick. The grid therefore
+  // reshuffles live, and each card is keyed by its review id so React moves the
+  // nodes instead of tearing the grid down and losing the entry animation.
+  const filteredList = useMemo(() => {
+    const seeded = [...sourceList];
+    let s = rotationSeed || 1;
+    for (let i = seeded.length - 1; i > 0; i--) {
+      // xorshift keeps this a pure function of the seed, so a re-render with an
+      // unchanged seed cannot reorder the grid under the reader.
+      s ^= s << 13;
+      s ^= s >>> 17;
+      s ^= s << 5;
+      const j = Math.abs(s) % (i + 1);
+      [seeded[i], seeded[j]] = [seeded[j], seeded[i]];
+    }
+    return seeded;
+  }, [sourceList, rotationSeed]);
 
   return (
     <section className="space-y-6 pt-6" id="testimonials-section">
@@ -273,7 +315,7 @@ export const Testimonials: React.FC<{ theme?: 'dark' | 'light' }> = ({ theme = '
         <div>
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 mb-2">
             <ShieldCheck className="w-3.5 h-3.5" />
-            <span>Audited Wall of Love (Dense Grid)</span>
+            <span>Verified Reviews</span>
           </div>
           <h2 className="text-2xl md:text-3xl font-black text-slate-900 dark:text-white tracking-tight">
             Institutional Stakers & Verified Payouts
