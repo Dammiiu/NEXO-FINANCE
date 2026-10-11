@@ -415,26 +415,28 @@ export const App: React.FC = () => {
             theme === 'dark' ? 'bg-[#0B0E17]/95 border-gray-800/90' : 'bg-white/95 border-slate-200 shadow-xs'
           }`}
         >
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
-          {/* Brand Logo */}
+        <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-2 sm:gap-4">
+          {/* Brand Logo. The tagline is the widest thing in the bar and was
+              forcing the whole header past the viewport on a phone, which is
+              what pushed the logout button off-screen. */}
           <div
             onClick={() => {
               setActiveTab('portfolio');
               setIsAdminOpen(false);
             }}
-            className="flex items-center gap-3 cursor-pointer select-none"
+            className="flex items-center gap-2 sm:gap-3 cursor-pointer select-none min-w-0 shrink"
           >
-            <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-[#00FFB2] via-blue-600 to-indigo-600 p-0.5 shadow-lg shadow-[#00FFB2]/20">
+            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-2xl bg-gradient-to-tr from-[#00FFB2] via-blue-600 to-indigo-600 p-0.5 shadow-lg shadow-[#00FFB2]/20 shrink-0">
               <div className="w-full h-full bg-[#0B0E17] rounded-[14px] flex items-center justify-center">
-                <Zap className="w-5 h-5 text-emerald-600 dark:text-[#00FFB2]" />
+                <Zap className="w-4 h-4 sm:w-5 sm:h-5 text-emerald-600 dark:text-[#00FFB2]" />
               </div>
             </div>
-            <div>
-              <span className="font-black text-lg tracking-tight flex items-center gap-1">
+            <div className="min-w-0">
+              <span className="font-black text-base sm:text-lg tracking-tight flex items-center gap-1 whitespace-nowrap">
                 <span className={theme === 'dark' ? 'text-white' : 'text-slate-900'}>NEXO</span>
                 <span className="text-emerald-600 dark:text-[#00FFB2]">FINANCE</span>
               </span>
-              <span className="text-[9px] text-slate-500 dark:text-gray-400 tracking-wider block font-mono">
+              <span className="hidden sm:block text-[9px] text-slate-500 dark:text-gray-400 tracking-wider font-mono truncate">
                 INSTITUTIONAL LIQUIDITY PROTOCOL
               </span>
             </div>
@@ -487,8 +489,10 @@ export const App: React.FC = () => {
             )}
           </nav>
 
-          {/* Right Header Controls: Theme Toggle, User Profile, Admin, Sign Out */}
-          <div className="flex items-center gap-2 sm:gap-2.5">
+          {/* Right Header Controls: Theme Toggle, User Profile, Admin, Sign Out.
+              shrink-0 so the cluster keeps its width instead of being squashed,
+              and gap-1 below sm so the four controls fit a phone. */}
+          <div className="flex items-center gap-1 sm:gap-2.5 shrink-0">
             {/* Dynamic KYC Badge (desktop) */}
             <div
               className={`hidden lg:flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-black uppercase border ${
@@ -528,7 +532,7 @@ export const App: React.FC = () => {
                 setActiveTab('profile');
                 setIsAdminOpen(false);
               }}
-              className={`flex items-center gap-2 p-1.5 pr-2.5 sm:pr-3 rounded-2xl border transition cursor-pointer ${
+              className={`flex items-center gap-2 p-1.5 pr-2.5 sm:pr-3 rounded-2xl border transition cursor-pointer shrink-0 ${
                 theme === 'dark'
                   ? 'bg-[#121622] border-gray-800 hover:border-gray-700'
                   : 'bg-white border-slate-200 hover:border-slate-300 shadow-xs'

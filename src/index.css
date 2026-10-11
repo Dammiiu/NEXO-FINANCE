@@ -12,6 +12,19 @@
   body {
     font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
   }
+  /* Stop the whole page from panning sideways on a phone.
+     A single element wider than the viewport used to widen the document, which
+     pushed the header's right-hand controls - including the sign-out button -
+     off-screen until the user dragged the page sideways to reach them.
+     Wide content is meant to scroll inside its own overflow-x-auto container;
+     this keeps that working while making a document-level sideways pan
+     impossible. `clip` rather than `hidden` so a sticky header is still
+     positioned against the viewport instead of a scroll container. */
+  html,
+  body {
+    max-width: 100vw;
+    overflow-x: clip;
+  }
   .font-mono-numbers {
     font-feature-settings: "tnum" 1, "zero" 1;
     font-variant-numeric: tabular-nums;

@@ -39,13 +39,13 @@ const DEFAULT_PLANS: InvestmentPlan[] = [
     name: 'Starter Plan',
     profit: '25.00',
     dailyProfitPercent: 25.0,
-    min: '200',
-    minDepositUsd: 200,
-    max: '999',
-    maxDepositUsd: 999,
+    min: '3,000',
+    minDepositUsd: 3000,
+    max: '4,999',
+    maxDepositUsd: 4999,
     days: '3 days lockup',
     durationDays: 3,
-    desc: 'Perfect for beginners. Low risk, steady daily returns.',
+    desc: 'Entry tier for serious capital. Low risk, steady daily returns.',
     features: ['Instant hourly payout', 'Capital returned upon maturity', 'Multi-coin allocation support', '24/7 dedicated auditor chat'],
   },
   {
@@ -53,10 +53,10 @@ const DEFAULT_PLANS: InvestmentPlan[] = [
     name: 'Pro Plan',
     profit: '30.00',
     dailyProfitPercent: 30.0,
-    min: '1,000',
-    minDepositUsd: 1000,
-    max: '4,999',
-    maxDepositUsd: 4999,
+    min: '5,000',
+    minDepositUsd: 5000,
+    max: '9,998',
+    maxDepositUsd: 9998,
     days: '7 days lockup',
     durationDays: 7,
     badge: 'MOST POPULAR',
@@ -69,10 +69,10 @@ const DEFAULT_PLANS: InvestmentPlan[] = [
     name: 'Prime Plan',
     profit: '60.00',
     dailyProfitPercent: 60.0,
-    min: '3,000',
-    minDepositUsd: 3000,
-    max: '4,999',
-    maxDepositUsd: 4999,
+    min: '9,999',
+    minDepositUsd: 9999,
+    max: '14,999',
+    maxDepositUsd: 14999,
     days: '10 days lockup',
     durationDays: 10,
     badge: 'BEST RETURN',
@@ -84,10 +84,10 @@ const DEFAULT_PLANS: InvestmentPlan[] = [
     name: 'Executive Plan',
     profit: '40.00',
     dailyProfitPercent: 40.0,
-    min: '5,000',
-    minDepositUsd: 5000,
-    max: '19,999',
-    maxDepositUsd: 19999,
+    min: '15,000',
+    minDepositUsd: 15000,
+    max: '24,999',
+    maxDepositUsd: 24999,
     days: '14 days lockup',
     durationDays: 14,
     desc: 'For serious crypto wealth builders. High yield staking.',
@@ -98,8 +98,8 @@ const DEFAULT_PLANS: InvestmentPlan[] = [
     name: 'VIP Institutional Plan',
     profit: '50.00',
     dailyProfitPercent: 50.0,
-    min: '20,000',
-    minDepositUsd: 20000,
+    min: '25,000',
+    minDepositUsd: 25000,
     max: '100,000+',
     maxDepositUsd: 100000,
     days: '30 days lockup',
@@ -287,10 +287,6 @@ export const Invest: React.FC<InvestProps> = ({
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20 mb-2">
-            <Sparkles className="w-3.5 h-3.5" />
-            <span>Multi-Tier Staking Contracts</span>
-          </div>
           <h2 className="text-2xl md:text-3xl font-black text-slate-900 dark:text-white tracking-tight">
             Automated High-Yield Crypto Vaults
           </h2>
@@ -578,24 +574,32 @@ export const Invest: React.FC<InvestProps> = ({
                     </p>
                   </div>
 
-                  {/* Quick amounts, clamped to this plan's own limits */}
+                  {/* Quick amounts, derived from this plan's own limits. The previous fixed
+                      list ($2.5k/$5k/$10k/$25k) was built for the old minimums
+                      and offered presets below a plan's floor or above its cap. */}
                   <div className="flex flex-wrap gap-2">
-                    {[selectedPlan.minDepositUsd, 2500, 5000, 10000, 25000]
-                      .filter((a, i, arr) => a <= selectedPlan.maxDepositUsd && arr.indexOf(a) === i)
-                      .map((amt) => (
-                        <button
-                          key={amt}
-                          type="button"
-                          onClick={() => setInvestAmount(amt.toString())}
-                          className={`px-3 py-1.5 rounded-lg font-bold text-[11px] transition cursor-pointer ${
-                            numericAmount === amt
-                              ? 'bg-[#00FFB2] text-black'
-                              : 'bg-slate-100 dark:bg-gray-800/80 hover:bg-slate-200 dark:hover:bg-gray-700 text-slate-700 dark:text-gray-300'
-                          }`}
-                        >
-                          ${amt.toLocaleString()}
-                        </button>
-                      ))}
+                    {(() => {
+                      const { minDepositUsd: lo, maxDepositUsd: hi } = selectedPlan;
+                      const presets = [lo, lo * 2, lo * 3, Math.round(hi / 2), hi];
+                      return presets
+                        .filter((a) => a >= lo && a <= hi)
+                        .map((amt) => Math.round(amt))
+                        .filter((a, i, arr) => arr.indexOf(a) === i)
+                        .map((amt) => (
+                          <button
+                            key={amt}
+                            type="button"
+                            onClick={() => setInvestAmount(amt.toString())}
+                            className={`px-3 py-1.5 rounded-lg font-bold text-[11px] transition cursor-pointer ${
+                              numericAmount === amt
+                                ? 'bg-[#00FFB2] text-black'
+                                : 'bg-slate-100 dark:bg-gray-800/80 hover:bg-slate-200 dark:hover:bg-gray-700 text-slate-700 dark:text-gray-300'
+                            }`}
+                          >
+                            ${amt.toLocaleString()}
+                          </button>
+                        ));
+                    })()}
                   </div>
 
                   {errorMessage && (
