@@ -100,6 +100,14 @@ app.use((req, _res, next) => {
   next();
 });
 
+app.use('/api/admin', (req, res, next) => {
+  // Admin data must not be revalidated into a cross-origin 304 without a body.
+  delete req.headers['if-none-match'];
+  delete req.headers['if-modified-since'];
+  res.setHeader('Cache-Control', 'no-store');
+  next();
+});
+
 // ── Static Investment Plans ───────────────────────────────────────────────────
 const INVESTMENT_PLANS = [
   {
