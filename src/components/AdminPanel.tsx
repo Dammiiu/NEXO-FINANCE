@@ -120,13 +120,45 @@ const KycDocumentViewer: React.FC<{ doc: KYCDocument }> = ({ doc }) => {
   );
 };
 
-// Gift card proofs are stored as data URLs in the database, so opening the raw
-// URL in a new tab can cause the browser to lock up on large uploads. Keep the
-// image inside the admin dashboard with a modal viewer instead.
-const GiftCardImageViewer: React.FC<{ imageUrl?: string | null }> = ({ imageUrl }) => {
-  const [open, setOpen] = useState<string | null>(null);
+const normalizeGiftCardImageUrl = (value?: string | null): string => {
+  if (typeof value !== 'string') return '';
+  const trimmed = value.trim();
+  if (!trimmed) return '';
+  if (/^data:image\/[^;,]+;base64,/i.test(trimmed) || /^https?:\/\//i.test(trimmed) || /^blob:/i.test(trimmed)) {
+    return trimmed;
+  }
+  if (/^\/(?!\/)/.test(trimmed)) return trimmed;
 
-  if (!imageUrl) {
+  const compact = trimmed.replace(/\s/g, '');
+  if (!compact || !/^[A-Za-z0-9+/]+={0,2}$/.test(compact)) return '';
+  let mime = 'image/jpeg';
+  if (compact.startsWith('iVBORw0KGgo')) mime = 'image/png';
+  else if (compact.startsWith('R0lGOD')) mime = 'image/gif';
+  else if (compact.startsWith('UklGR')) mime = 'image/webp';
+  else if (compact.startsWith('/9j/')) mime = 'image/jpeg';
+  return `data:${mime};base64,${compact}`;
+};
+
+// Gift card proofs are stored as data URLs or legacy raw base64 values. Render
+// only a normalized image source and keep the full-size viewer out of the table
+// so the parent panel cannot clip or blank it.
+const GiftCardImageViewer: React.FC<{ imageUrl?: string | null }> = ({ imageUrl }) => {
+  const [open, setOpen] = useState(false);
+  const [thumbnailFailed, setThumbnailFailed] = useState(false);
+  const [fullImageFailed, setFullImageFailed] = useState(false);
+  const normalizedUrl = normalizeGiftCardImageUrl(imageUrl);
+  useEffect(() => setThumbnailFailed(false), [normalizedUrl]);
+  useEffect(() => setFullImageFailed(false), [open, normalizedUrl]);
+  useEffect(() => {
+    if (!open) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [open]);
+
+  if (!normalizedUrl) {
     return <span className="text-[10px] text-gray-500">No Image</span>;
   }
 
@@ -134,33 +166,56 @@ const GiftCardImageViewer: React.FC<{ imageUrl?: string | null }> = ({ imageUrl 
     <>
       <button
         type="button"
-        onClick={() => setOpen(imageUrl)}
+        onClick={() => setOpen(true)}
         className="inline-flex items-center gap-1 text-[11px] text-[#00FFB2] hover:underline bg-emerald-500/10 px-2 py-1 rounded-lg border border-emerald-500/20"
       >
-        <img src={imageUrl} alt="Gift proof" className="w-6 h-6 object-cover rounded" />
+        {thumbnailFailed ? (
+          <span className="w-6 h-6 inline-flex items-center justify-center rounded bg-gray-800 text-gray-400">!</span>
+        ) : (
+          <img
+            src={normalizedUrl}
+            alt="Gift proof"
+            className="w-6 h-6 object-cover rounded"
+            onError={() => setThumbnailFailed(true)}
+          />
+        )}
         <span>View Image</span>
       </button>
 
-      {open && (
+      {open && createPortal(
         <div
-          className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/90 backdrop-blur-sm"
-          onClick={() => setOpen(null)}
+          className="fixed inset-0 z-[90] flex items-center justify-center p-4 bg-black/90 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Gift card proof image"
+          onClick={() => setOpen(false)}
         >
-          <div className="relative max-w-[90vw] max-h-[90vh]">
-            <img
-              src={open}
-              alt="Gift card proof"
-              className="max-w-full max-h-[85vh] rounded-xl object-contain shadow-2xl"
-            />
+          <div
+            className="relative max-w-[90vw] max-h-[90vh] flex items-center justify-center"
+            onClick={(event) => event.stopPropagation()}
+          >
+            {fullImageFailed ? (
+              <div className="rounded-xl border border-rose-500/30 bg-gray-950 px-6 py-5 text-sm text-rose-300">
+                This image could not be loaded.
+              </div>
+            ) : (
+              <img
+                src={normalizedUrl}
+                alt="Gift card proof"
+                className="max-w-[90vw] max-h-[85vh] rounded-xl object-contain shadow-2xl"
+                onError={() => setFullImageFailed(true)}
+              />
+            )}
             <button
               type="button"
-              onClick={() => setOpen(null)}
+              onClick={() => setOpen(false)}
               className="absolute top-3 right-3 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white text-xs font-bold transition"
             >
               Close
             </button>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </>
   );

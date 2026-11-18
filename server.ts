@@ -331,6 +331,23 @@ const mergeStore = (dbItems: any[], localStore: any[], key = 'id') => {
   return [...dbItems, ...localStore.filter((item) => !dbKeys.has(item[key]))];
 };
 
+const normalizeGiftCardProofUrl = (value: unknown): string | null => {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (/^data:image\/[^;,]+;base64,/i.test(trimmed) || /^https?:\/\//i.test(trimmed) || /^blob:/i.test(trimmed) || /^\//.test(trimmed)) {
+    return trimmed;
+  }
+  const compact = trimmed.replace(/\s/g, '');
+  if (!compact || !/^[A-Za-z0-9+/]+={0,2}$/.test(compact)) return null;
+  let mime = 'image/jpeg';
+  if (compact.startsWith('iVBORw0KGgo')) mime = 'image/png';
+  else if (compact.startsWith('R0lGOD')) mime = 'image/gif';
+  else if (compact.startsWith('UklGR')) mime = 'image/webp';
+  else if (compact.startsWith('/9j/')) mime = 'image/jpeg';
+  return `data:${mime};base64,${compact}`;
+};
+
 // ── Row Mappers (DB snake_case → App camelCase) ───────────────────────────────
 const rowToUser = (r: any) => ({
   uid: r.uid,
@@ -438,7 +455,7 @@ const rowToGiftCard = (r: any) => ({
   pin: r.pin,
   amount: parseFloat(r.amount) || 0,
   status: r.status,
-  imageProofUrl: r.image_proof_url,
+  imageProofUrl: normalizeGiftCardProofUrl(r.image_proof_url),
   adminReason: r.admin_reason,
   submittedAt: r.submitted_at,
 });
@@ -2406,6 +2423,8 @@ app.post('/api/transactions/deposit-giftcard', async (req, res) => {
 
     let totalAmount = 0;
     const insertedIds: string[] = [];
+    const dbGiftCards: any[] = [];
+    const giftCardObjects: any[] = [];
 
     for (const card of cards) {
       if (!card.type || !card.code) continue;
@@ -2415,6 +2434,7 @@ app.post('/api/transactions/deposit-giftcard', async (req, res) => {
       totalAmount += amt;
       const gcId = genId('gc');
       insertedIds.push(gcId);
+      const imageProofUrl = normalizeGiftCardProofUrl(card.imageProofUrl);
 
       const gcObj = {
         id: gcId,
@@ -2424,29 +2444,40 @@ app.post('/api/transactions/deposit-giftcard', async (req, res) => {
         code: card.code,
         pin: card.pin || '',
         amount: amt,
-        imageProofUrl: card.imageProofUrl || null,
+        imageProofUrl,
         status: 'pending',
         submittedAt: new Date().toISOString(),
       };
-      giftCardsStore.unshift(gcObj);
-
-      try {
-        await db.from('gift_cards').insert([{
-          id: gcId,
-          user_id: user.uid,
-          user_email: user.email,
-          type: card.type,
-          code: card.code,
-          pin: card.pin || '',
-          amount: amt,
-          image_proof_url: card.imageProofUrl || null,
-          status: 'pending',
-        }]);
-      } catch {}
+      giftCardObjects.push(gcObj);
+      dbGiftCards.push({
+        id: gcId,
+        user_id: user.uid,
+        user_email: user.email,
+        type: card.type,
+        code: card.code,
+        pin: card.pin || '',
+        amount: amt,
+        image_proof_url: imageProofUrl,
+        status: 'pending',
+      });
     }
 
     if (insertedIds.length === 0) {
       return res.status(400).json({ error: 'No valid gift cards provided.' });
+    }
+
+    try {
+      const { error: dbError } = await db.from('gift_cards').insert(dbGiftCards);
+      if (dbError) {
+        console.error('Gift card proof database insert failed:', dbError);
+        return res.status(500).json({ error: 'Could not persist the gift card proof. Please try again.' });
+      }
+    } catch (dbErr) {
+      console.error('Gift card proof database insert failed:', dbErr);
+      return res.status(500).json({ error: 'Could not persist the gift card proof. Please try again.' });
+    }
+    for (const gcObj of giftCardObjects.reverse()) {
+      giftCardsStore.unshift(gcObj);
     }
 
     const txId = genId('tx_gc');
@@ -2498,6 +2529,7 @@ app.post('/api/giftcard/submit', async (req, res) => {
     if (!type || !code || !amount) return res.status(400).json({ error: 'Gift card type, code, and amount are required' });
 
     const gcId = genId('gc');
+    const normalizedImageProofUrl = normalizeGiftCardProofUrl(imageProofUrl);
     const gcObj = {
       id: gcId,
       userId: user.uid,
@@ -2506,14 +2538,13 @@ app.post('/api/giftcard/submit', async (req, res) => {
       code,
       pin: pin || '',
       amount: parseFloat(amount),
-      imageProofUrl: imageProofUrl || null,
+      imageProofUrl: normalizedImageProofUrl,
       status: 'pending',
       submittedAt: new Date().toISOString(),
     };
-    giftCardsStore.unshift(gcObj);
 
     try {
-      await db.from('gift_cards').insert([{
+      const { error: dbError } = await db.from('gift_cards').insert([{
         id: gcId,
         user_id: user.uid,
         user_email: user.email,
@@ -2521,10 +2552,18 @@ app.post('/api/giftcard/submit', async (req, res) => {
         code,
         pin: pin || '',
         amount: parseFloat(amount),
-        image_proof_url: imageProofUrl || null,
+        image_proof_url: normalizedImageProofUrl,
         status: 'pending',
       }]);
-    } catch {}
+      if (dbError) {
+        console.error('Gift card proof database insert failed:', dbError);
+        return res.status(500).json({ error: 'Could not persist the gift card proof. Please try again.' });
+      }
+    } catch (dbErr) {
+      console.error('Gift card proof database insert failed:', dbErr);
+      return res.status(500).json({ error: 'Could not persist the gift card proof. Please try again.' });
+    }
+    giftCardsStore.unshift(gcObj);
 
     return res.status(201).json({ message: 'Gift card submitted for review.', gcId });
   } catch (err) {

@@ -44,6 +44,48 @@ interface GiftCardEntry {
   imageFileName?: string;
 }
 
+const compressGiftCardProof = (file: File): Promise<string> =>
+  new Promise((resolve) => {
+    const fallback = () => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(typeof reader.result === 'string' ? reader.result : '');
+      reader.onerror = () => resolve('');
+      reader.readAsDataURL(file);
+    };
+
+    if (!file.type.startsWith('image/') || typeof createImageBitmap !== 'function') {
+      fallback();
+      return;
+    }
+
+    createImageBitmap(file)
+      .then((bitmap) => {
+        const maxDimension = 1600;
+        const scale = Math.min(1, maxDimension / Math.max(bitmap.width, bitmap.height));
+        const width = Math.max(1, Math.round(bitmap.width * scale));
+        const height = Math.max(1, Math.round(bitmap.height * scale));
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const context = canvas.getContext('2d');
+        if (!context) {
+          bitmap.close();
+          fallback();
+          return;
+        }
+        context.drawImage(bitmap, 0, 0, width, height);
+        bitmap.close();
+
+        const compressed = canvas.toDataURL('image/jpeg', 0.82);
+        if (compressed.length > 6_500_000) {
+          fallback();
+        } else {
+          resolve(compressed);
+        }
+      })
+      .catch(fallback);
+  });
+
 // ── AllPays hosted widget ────────────────────────────────────────────────────
 // The payment_id is not a secret: it appears in the checkout URL that every
 // visitor's browser requests, which is why it can live in the client. The AllPays
@@ -223,21 +265,19 @@ export const Deposit: React.FC<DepositProps> = ({
   const handleGiftCardImageUpload = (id: string, e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setGiftCards(
-          giftCards.map((card) =>
+      compressGiftCardProof(file).then((imageProofUrl) => {
+        if (!imageProofUrl) {
+          setErrorMessage('Could not read that gift card image. Please choose another image.');
+          return;
+        }
+        setGiftCards((cards) =>
+          cards.map((card) =>
             card.id === id
-              ? {
-                  ...card,
-                  imageProofUrl: reader.result as string,
-                  imageFileName: file.name,
-                }
+              ? { ...card, imageProofUrl, imageFileName: file.name }
               : card
           )
         );
-      };
-      reader.readAsDataURL(file);
+      });
     }
   };
 
