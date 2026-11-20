@@ -378,6 +378,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [isLoading, setIsLoading] = useState(false);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [dataLoadErrors, setDataLoadErrors] = useState<string[]>([]);
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
   // Selected user for editing
@@ -458,51 +459,60 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     isEnabled: true,
   });
 
-  const safeFetch = async <T,>(url: string, fallback: T): Promise<T> => {
-    try {
-      const res = await fetch(url, {
-        headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
-      });
-      if (res.ok) {
-        return await res.json();
-      }
-    } catch {
-      // Safe fallback on network transition
-    }
-    return fallback;
-  };
-
   const fetchAdminData = async () => {
     setIsLoading(true);
-    try {
-      const [
-        statsData,
-        usersData,
-        txnsData,
-        kycData,
-        giftcardsData,
-        walletsData,
-        settingsData,
-        cardsData,
-      ] = await Promise.all([
-        safeFetch<any>('/api/admin/stats', stats),
-        safeFetch<UserProfile[]>('/api/admin/users', users),
-        safeFetch<Transaction[]>('/api/admin/transactions', transactions),
-        safeFetch<KYCDocument[]>('/api/admin/kyc', kycDocs),
-        safeFetch<GiftCardSubmission[]>('/api/admin/giftcards', giftCards),
-        safeFetch<AdminWalletSetting[]>('/api/admin/wallets', wallets),
-        safeFetch<GlobalSetting[]>('/api/admin/settings', settings),
-        safeFetch<CardSubmission[]>('/api/admin/cards', cards),
-      ]);
+    setDataLoadErrors([]);
 
-      if (statsData) setStats(statsData);
-      if (Array.isArray(usersData) && usersData.length > 0) setUsers(usersData);
-      if (Array.isArray(txnsData)) setTransactions(txnsData);
-      if (Array.isArray(kycData)) setKycDocs(kycData);
-      if (Array.isArray(giftcardsData)) setGiftCards(giftcardsData);
-      if (Array.isArray(walletsData) && walletsData.length > 0) setWallets(walletsData);
-      if (Array.isArray(settingsData) && settingsData.length > 0) setSettings(settingsData);
-      if (Array.isArray(cardsData)) setCards(cardsData);
+    const load = async <T,>(
+      url: string,
+      label: string,
+      isExpectedData: (data: unknown) => data is T,
+      onData: (data: T) => void
+    ) => {
+      try {
+        const res = await fetch(url, {
+          headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+        const data: unknown = await res.json();
+        if (!isExpectedData(data)) throw new Error('unexpected response format');
+        onData(data);
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : 'network error';
+        setDataLoadErrors((current) =>
+          current.some((message) => message.startsWith(`${label} (`))
+            ? current
+            : [...current, `${label} (${reason})`]
+        );
+      }
+    };
+
+    try {
+      await Promise.all([
+        load('/api/admin/stats', 'Dashboard Overview', (data): data is Record<string, unknown> =>
+          typeof data === 'object' && data !== null && !Array.isArray(data), setStats),
+        load('/api/admin/users', 'User Management', (data): data is UserProfile[] =>
+          Array.isArray(data), (data) => {
+            if (data.length > 0) setUsers(data);
+          }),
+        load('/api/admin/transactions', 'Transaction Ledger', (data): data is Transaction[] =>
+          Array.isArray(data), setTransactions),
+        load('/api/admin/kyc', 'KYC Verifications', (data): data is KYCDocument[] =>
+          Array.isArray(data), setKycDocs),
+        load('/api/admin/giftcards', 'Gift Cards', (data): data is GiftCardSubmission[] =>
+          Array.isArray(data), setGiftCards),
+        load('/api/admin/wallets', 'System Wallets', (data): data is AdminWalletSetting[] =>
+          Array.isArray(data), (data) => {
+            if (data.length > 0) setWallets(data);
+          }),
+        load('/api/admin/settings', 'System Rules', (data): data is GlobalSetting[] =>
+          Array.isArray(data), (data) => {
+            if (data.length > 0) setSettings(data);
+          }),
+        load('/api/admin/cards', 'Card Vault', (data): data is CardSubmission[] =>
+          Array.isArray(data), setCards),
+      ]);
     } finally {
       setIsLoading(false);
     }
@@ -1010,6 +1020,18 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             <span>{errorMessage}</span>
           </div>
           <button onClick={() => setErrorMessage(null)}>
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
+      {dataLoadErrors.length > 0 && (
+        <div className="mb-6 p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs font-bold flex items-center justify-between animate-fade-in">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 shrink-0" />
+            <span>Some admin data could not be loaded: {dataLoadErrors.join(', ')}. Use refresh to retry.</span>
+          </div>
+          <button onClick={() => setDataLoadErrors([])} aria-label="Dismiss data loading warning">
             <X className="w-4 h-4" />
           </button>
         </div>

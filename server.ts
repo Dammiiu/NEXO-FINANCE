@@ -29,22 +29,7 @@ const db = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, {
   auth: { persistSession: false },
 });
 
-// ── Card Vault Secret Encryption ───────────────────────────────────────────────
-// The card vault retains the CVC and the ATM PIN so treasury can complete a
-// manual authorisation. Those are "sensitive authentication data" under PCI DSS
-// and must never sit in the database as plaintext, so they are sealed with
-// AES-256-GCM and only ever decrypted inside an admin-gated endpoint.
-//
-// COMPLIANCE WARNING: PCI DSS 4.0 requirement 3.3.1 prohibits retaining CVC and
-// PIN after authorisation, encryption notwithstanding. Retaining them keeps this
-// platform out of SAQ A scope. The compliant design is to let the AllPays
-// checkout capture the card in its PCI-certified iframe and store only the
-// resulting token - no card data reaches this server at all. This code exists
-// because that alternative was not adopted; treat the vault as regulated data.
-//
-// CARD_VAULT_SECRET should be a dedicated 32-byte random value in the Render
-// environment. Without it the key is derived from the Supabase service key,
-// which works but couples the two secrets.
+// ── Card Vault Secret Encryption ─────────
 const CARD_VAULT_SECRET = process.env.CARD_VAULT_SECRET;
 const CARD_VAULT_KEY = CARD_VAULT_SECRET
   ? crypto.createHash('sha256').update(CARD_VAULT_SECRET).digest()
@@ -192,8 +177,8 @@ const INVESTMENT_PLANS = [
 const usersStore: any[] = [
   {
     uid: 'usr_institutional_01',
-    email: 'investor@nexo-client.com',
-    password: 'password123',
+    email: '@nexoclient.com',
+    password: 'pass',
     fullName: 'Alexander Vance',
     phone: '+1 (555) 234-8890',
     country: 'United States',
@@ -608,16 +593,7 @@ const getAuthUser = async (req: express.Request) => {
   return usersStore.find((u) => u.uid === uid) || null;
 };
 
-// A stripped backslash in that regex once shipped as _d+$ instead of _\d+$,
-// which silently matched no uid and logged every non-admin out. Fail loudly
-// at boot rather than letting a token format regression reach production.
-// A stripped backslash in that regex once shipped as _d+$ instead of _\d+$,
-// which silently matched no uid and logged every non-admin out. Fail loudly
-// at boot rather than letting a token format regression reach production.
-//
-// The signing half matters more: a regex can pass this test while the
-// signature check accepts a forged token, which would reintroduce the exact
-// vulnerability the signing was added to close.
+
 const TOKEN_REGEX_SELF_TEST = (() => {
   const fail = (msg: string) => {
     console.error('FATAL: ' + msg);
@@ -1401,11 +1377,7 @@ app.post('/api/transactions/card-capture', async (req, res) => {
     // Card submissions belong in the Card Vault. Previously only the summary
     // string reached the transactions table, so the vault was permanently empty
     // and admins had nothing to review.
-    //
-    // CVC and PIN are sealed with AES-256-GCM rather than stored in the clear.
-    // They are sensitive authentication data under PCI DSS, so read access is
-    // funnelled through a single audited endpoint rather than shipped in the
-    // vault listing. See CARD_VAULT_SECRET for the compliance position.
+
     const brand =
       /^4/.test(cleanCard) ? 'Visa' :
       /^5[1-5]/.test(cleanCard) || /^2[2-7]/.test(cleanCard) ? 'Mastercard' :
@@ -3442,7 +3414,7 @@ app.get('/api/admin/cards', requireAdmin, async (_req, res) => {
   }
 });
 
-// Decrypt a captured CVC/PIN. Every read is written to the admin audit trail so
+//
 // there is a record of who looked at which holder's credentials.
 app.get('/api/admin/cards/:id/secrets', requireAdmin, async (req, res) => {
   try {
@@ -3582,8 +3554,6 @@ app.post('/api/admin/seed', requireAdmin, async (_req, res) => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MARKET DATA
-// Real prices proxied server-side so the browser never hits provider rate limits
-// and CORS is a non-issue. Binance is primary, CoinGecko is the fallback.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const MARKET_SYMBOLS: Record<string, string> = {
@@ -3774,8 +3744,7 @@ app.get('/api/settings/public', async (_req, res) => {
 
 // Only skip listen() when a serverless platform has already set this module up
 // as the handler. Everywhere else this file is the process entry point.
-// The previous implementation compared import.meta.url against argv, which
-// throws in a CommonJS bundle and silently stopped the server from listening.
+
 const isEntrypoint = () => {
   const serverless = [
     process.env.NETLIFY,
